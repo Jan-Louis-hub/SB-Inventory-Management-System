@@ -44,12 +44,12 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 - [X] Create a React application with Vite.
 - [X] Install and configure React Router.
-- [ ] Set up a shared Axios or Fetch API client.
-- [ ] Configure the API base URL through environment variables.
-- [ ] Create a consistent folder structure for pages, components, API functions, and styles.
-- [ ] Establish a responsive design system: colors, spacing, typography, buttons, inputs, cards, and tables.
-- [ ] Add loading, empty, success, and error states.
-- [ ] Confirm the application runs locally in the browser.
+- [X] Set up a shared Axios or Fetch API client.
+- [X] Configure the API base URL through environment variables.
+- [X] Create a consistent folder structure for pages, components, API functions, and styles.
+- [X] Establish a responsive design system: colors, spacing, typography, buttons, inputs, cards, and tables.
+- [X] Add loading, empty, success, and error states.
+- [X] Confirm the application runs locally in the browser.
 
 
 ## F2. Application Layout and Navigation
@@ -284,9 +284,9 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## D1. Database Setup and Configuration
 
-- [ ] Install PostgreSQL and a database administration tool such as pgAdmin.
-- [ ] Create a database named `inventory_db`.
-- [ ] Create a dedicated application database user with only the required privileges.
+- [X] Install PostgreSQL and a database administration tool such as pgAdmin.
+- [X] Create a database named `inventory_db`.
+- [X] Create a dedicated application database user with only the required privileges.
 - [ ] Store the connection string in environment variables.
 - [ ] Configure development, testing, and production databases separately.
 - [ ] Set up Flask-Migrate/Alembic migrations.
