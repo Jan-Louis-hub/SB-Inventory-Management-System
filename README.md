@@ -1,4 +1,4 @@
-# SB Inventory | Small Business Inventory Management System
+# Small Business Inventory Management System
 
 A full-stack inventory management system for small businesses.
 
