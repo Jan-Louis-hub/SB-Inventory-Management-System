@@ -42,8 +42,8 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## F1. Frontend Project Setup
 
-- [ ] Create a React application with Vite.
-- [ ] Install and configure React Router.
+- [X] Create a React application with Vite.
+- [X] Install and configure React Router.
 - [ ] Set up a shared Axios or Fetch API client.
 - [ ] Configure the API base URL through environment variables.
 - [ ] Create a consistent folder structure for pages, components, API functions, and styles.
