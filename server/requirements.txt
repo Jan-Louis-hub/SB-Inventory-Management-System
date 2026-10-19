@@ -1,0 +1,22 @@
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Database (PostgreSQL)
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Config and validation
+pydantic-settings
+python-dotenv
+email-validator
+
+# Auth (login, password hashing, tokens)
+pyjwt
+pwdlib[argon2]
+
+# Testing
+pytest
+httpx
