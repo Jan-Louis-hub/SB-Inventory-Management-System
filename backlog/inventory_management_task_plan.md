@@ -166,24 +166,24 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 - [X] Create and activate a Python virtual environment.
 - [X] Install Flask, Flask-SQLAlchemy, Flask-Migrate, PostgreSQL driver, Flask-CORS, and a request validation library.
-- [ ] Create a Flask application factory.
-- [ ] Configure development and production settings.
-- [ ] Load secrets and database connection settings from environment variables.
-- [ ] Add a health endpoint.
-- [ ] Set up structured logging and consistent JSON error responses.
-- [ ] Pin or lock dependencies for reproducible installs.
+- [X] Create a Flask application factory.
+- [X] Configure development and production settings.
+- [X] Load secrets and database connection settings from environment variables.
+- [X] Add a health endpoint.
+- [X] Set up structured logging and consistent JSON error responses.
+- [X] Pin or lock dependencies for reproducible installs.
 
 
 ## B2. API Conventions
 
-- [ ] Use `/api/...` routes with consistent naming.
-- [ ] Use JSON request and response bodies.
-- [ ] Return appropriate HTTP status codes: 200, 201, 204, 400, 401, 403, 404, 409, and 500 where applicable.
-- [ ] Validate every incoming field on the server.
-- [ ] Return consistent error shapes, for example `{"error": "SKU already exists"}`.
-- [ ] Add pagination, filtering, and sorting with safe allowlists.
-- [ ] Avoid exposing stack traces or secrets to clients.
-- [ ] Document endpoints and example payloads.
+- [X] Use `/api/...` routes with consistent naming.
+- [X] Use JSON request and response bodies.
+- [X] Return appropriate HTTP status codes: 200, 201, 204, 400, 401, 403, 404, 409, and 500 where applicable.
+- [X] Validate every incoming field on the server.
+- [X] Return consistent error shapes, for example `{"error": "SKU already exists"}`.
+- [X] Add pagination, filtering, and sorting with safe allowlists.
+- [X] Avoid exposing stack traces or secrets to clients.
+- [X] Document endpoints and example payloads.
 
 ## B3. Products API
 
@@ -287,11 +287,11 @@ Build and test one vertical slice at a time. For example, complete the database 
 - [X] Install PostgreSQL and a database administration tool such as pgAdmin.
 - [X] Create a database named `inventory_db`.
 - [X] Create a dedicated application database user with only the required privileges.
-- [ ] Store the connection string in environment variables.
-- [ ] Configure development, testing, and production databases separately.
-- [ ] Set up Flask-Migrate/Alembic migrations.
-- [ ] Add a documented database initialization process.
-- [ ] Never commit credentials or production data to source control.
+- [x] Store the connection string in environment variables.
+- [X] Configure development, testing, and production databases separately.
+- [X] Set up Flask-Migrate/Alembic migrations.
+- [X] Add a documented database initialization process.
+- [X] Never commit credentials or production data to source control.
 
 ## D2. Core Tables
 
@@ -411,42 +411,42 @@ Suggested fields:
 
 ## D3. Relationships and Constraints
 
-- [ ] One category can have many products.
-- [ ] One sale has many sale items.
-- [ ] One product can appear in many sale items.
-- [ ] One supplier can have many purchase orders.
-- [ ] One purchase order has many purchase order items.
-- [ ] One product can have many stock movements.
-- [ ] Add foreign keys to preserve referential integrity.
-- [ ] Add unique constraints for SKU, email, sale number, and purchase number.
-- [ ] Add check constraints for non-negative prices, quantities, and reorder levels.
-- [ ] Decide on `ON DELETE` behavior deliberately; preserve historical business records.
-- [ ] Use `NUMERIC` for money, not floating-point columns.
-- [ ] Use timestamps consistently, preferably storing UTC and converting for display.
-- [ ] Decide whether SKU uniqueness is global or scoped to a business.
-- [ ] Consider case-insensitive uniqueness for email, SKU, and category names where appropriate.
+- [X] One category can have many products.
+- [X] One sale has many sale items.
+- [X] One product can appear in many sale items.
+- [X] One supplier can have many purchase orders.
+- [X] One purchase order has many purchase order items.
+- [X] One product can have many stock movements.
+- [X] Add foreign keys to preserve referential integrity.
+- [X] Add unique constraints for SKU, email, sale number, and purchase number.
+- [X] Add check constraints for non-negative prices, quantities, and reorder levels.
+- [X] Decide on `ON DELETE` behavior deliberately; preserve historical business records.
+- [X] Use `NUMERIC` for money, not floating-point columns.
+- [X] Use timestamps consistently, preferably storing UTC and converting for display.
+- [X] Decide whether SKU uniqueness is global or scoped to a business.
+- [X] Consider case-insensitive uniqueness for email, SKU, and category names where appropriate.
 
 ## D4. Indexes and Query Performance
 
-- [ ] Index foreign key columns used frequently in joins and filters.
-- [ ] Index product SKU.
-- [ ] Add appropriate indexes for product name search.
-- [ ] Index sale date and purchase order date.
-- [ ] Index stock movements by product and creation time.
-- [ ] Add indexes for commonly used status filters.
-- [ ] Use `EXPLAIN ANALYZE` to investigate slow queries when sample data grows.
-- [ ] Avoid adding unnecessary indexes before understanding query patterns.
+- [X] Index foreign key columns used frequently in joins and filters.
+- [X] Index product SKU.
+- [X] Add appropriate indexes for product name search.
+- [X] Index sale date and purchase order date.
+- [X] Index stock movements by product and creation time.
+- [X] Add indexes for commonly used status filters.
+- [X] Use `EXPLAIN ANALYZE` to investigate slow queries when sample data grows.
+- [X] Avoid adding unnecessary indexes before understanding query patterns.
 
 ## D5. Data Integrity and Transaction Rules
 
-- [ ] A product quantity must not be changed by sales without a corresponding movement record.
-- [ ] Stock deduction, sale creation, sale item creation, and movement creation must commit or roll back together.
-- [ ] Receiving purchase order items and increasing stock must commit or roll back together.
-- [ ] Protect against duplicate sale submissions.
-- [ ] Use suitable row locking or atomic updates for concurrent stock changes.
-- [ ] Define how returns, refunds, voids, and cancelled orders affect stock and reports.
-- [ ] Choose a consistent approach to stock valuation, such as average cost or FIFO, if financial accuracy requires it.
-- [ ] Preserve historical prices and costs on completed transactions.
+- [x] A product quantity must not be changed by sales without a corresponding movement record.
+- [x] Stock deduction, sale creation, sale item creation, and movement creation must commit or roll back together.
+- [x] Receiving purchase order items and increasing stock must commit or roll back together.
+- [X] Protect against duplicate sale submissions.
+- [X] Use suitable row locking or atomic updates for concurrent stock changes.
+- [X] Define how returns, refunds, voids, and cancelled orders affect stock and reports.
+- [X] Choose a consistent approach to stock valuation, such as average cost or FIFO, if financial accuracy requires it.
+- [X] Preserve historical prices and costs on completed transactions.
 
 ## D6. Migrations, Seed Data, Backups, and Recovery
 
