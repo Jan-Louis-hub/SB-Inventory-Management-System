@@ -1,1 +1,3 @@
-print(Hello 404 Crew)
+from app import create_app
+
+app = create_app()

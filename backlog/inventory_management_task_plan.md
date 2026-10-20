@@ -54,12 +54,12 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## F2. Application Layout and Navigation
 
-- [ ] Build a persistent sidebar and top navigation bar.
-- [ ] Add navigation for Dashboard, Products, Categories, Stock, Suppliers, Purchases, Sales, Reports, and Settings.
-- [ ] Highlight the current page in the navigation.
-- [ ] Add a mobile-friendly navigation layout.
-- [ ] Display the signed-in user's name and role when authentication is implemented.
-- [ ] Add confirmation dialogs for important or destructive actions.
+- [X] Build a persistent sidebar and top navigation bar.
+- [X] Add navigation for Dashboard, Products, Categories, Stock, Suppliers, Purchases, Sales, Reports, and Settings.
+- [X] Highlight the current page in the navigation.
+- [X] Add a mobile-friendly navigation layout.
+- [X] Display the signed-in user's name and role when authentication is implemented.
+- [X] Add confirmation dialogs for important or destructive actions.
 
 ## F3. Dashboard
 
@@ -141,12 +141,12 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## F10. Authentication and Accessibility
 
-- [ ] Build login and logout screens.
-- [ ] Handle expired sessions or tokens.
-- [ ] Hide navigation options the current role cannot use, while still enforcing permissions on the backend.
-- [ ] Make forms keyboard-accessible and provide visible labels.
-- [ ] Use readable contrast, focus indicators, and meaningful error messages.
-- [ ] Test the layout on desktop, tablet, and mobile widths.
+- [X] Build login and logout screens.
+- [X] Handle expired sessions or tokens.
+- [X] Hide navigation options the current role cannot use, while still enforcing permissions on the backend.
+- [X] Make forms keyboard-accessible and provide visible labels.
+- [X] Use readable contrast, focus indicators, and meaningful error messages.
+- [X] Test the layout on desktop, tablet, and mobile widths.
 
 ## F11. Frontend Testing
 
@@ -164,8 +164,8 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## B1. Backend Setup
 
-- [ ] Create and activate a Python virtual environment.
-- [ ] Install Flask, Flask-SQLAlchemy, Flask-Migrate, PostgreSQL driver, Flask-CORS, and a request validation library.
+- [X] Create and activate a Python virtual environment.
+- [X] Install Flask, Flask-SQLAlchemy, Flask-Migrate, PostgreSQL driver, Flask-CORS, and a request validation library.
 - [ ] Create a Flask application factory.
 - [ ] Configure development and production settings.
 - [ ] Load secrets and database connection settings from environment variables.
@@ -253,14 +253,14 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## B9. Authentication and Authorization
 
-- [ ] Implement login and logout.
-- [ ] Hash passwords with a suitable password-hashing library.
-- [ ] Define roles such as Admin, Manager, and Cashier.
-- [ ] Enforce permissions in every protected backend endpoint.
-- [ ] Choose a browser authentication strategy carefully. If using cookies, configure secure, HttpOnly, SameSite cookies and CSRF protection as appropriate. If using tokens, define secure storage, expiration, refresh, and revocation behavior.
-- [ ] Apply login rate limiting and safe error messages.
-- [ ] Validate authorization for exports, stock adjustments, sales, and user management.
-- [ ] Never rely on frontend route hiding as access control.
+- [x] Implement login and logout.
+- [x] Hash passwords with a suitable password-hashing library.
+- [x] Define roles such as Admin, Manager, and Cashier.
+- [x] Enforce permissions in every protected backend endpoint.
+- [x] Choose a browser authentication strategy carefully. If using cookies, configure secure, HttpOnly, SameSite cookies and CSRF protection as appropriate. If using tokens, define secure storage, expiration, refresh, and revocation behavior.
+- [x] Apply login rate limiting and safe error messages.
+- [x] Validate authorization for exports, stock adjustments, sales, and user management.
+- [x] Never rely on frontend route hiding as access control.
 
 ## B10. Backend Testing and Reliability
 
