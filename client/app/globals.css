@@ -145,14 +145,12 @@
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
-
 .scroll-hidden {
   scrollbar-width: none;
 }
 .scroll-hidden::-webkit-scrollbar {
   display: none;
 }
-
 .scroll-subtle:hover {
   scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent)
     transparent;
