@@ -2,7 +2,7 @@
 
 A full-stack inventory management system for small businesses.
 
-**Stack:** Next.js, shadcn/ui, FastAPI (Python), PostgreSQL
+**Stack:** Next.js, shadcn/ui, Flask (Python), PostgreSQL
 
 **Group members:** Vuyisile Nqono, Franco van Rooyen, Jedidiah Tshiteya, Jan-Louie Fourie, Olaotse Phuti
 
@@ -35,16 +35,20 @@ DATABASE_URL=postgresql+psycopg2://postgres:yourpassword@localhost:5432/sb_inven
 
 Create the `sb_inventory` database in PostgreSQL (via pgAdmin or psql) before starting the server.
 
+Set `SECRET_KEY` to a random value for production. `APP_ENV`, `SECRET_KEY`, and
+`DATABASE_URL` are read from the environment or the local `server/.env` file.
+Production startup requires both `SECRET_KEY` and `DATABASE_URL`.
+
 ### Run the backend
 
-Make sure the virtual environment is active, then:
+From the `server` directory with the virtual environment active:
 
 ```bash
-uvicorn main:app --reload --port 8000
+flask --app main run --debug --port 8000
 ```
 
-- API: http://localhost:8000
-- Interactive API docs: http://localhost:8000/docs
+- Health endpoint: http://localhost:8000/api/health
+- API conventions and example payloads: `server/API_CONVENTIONS.md`
 
 ## Setup Frontend
 
@@ -83,7 +87,7 @@ Use two terminals:
 
 | Terminal | Folder | Command |
 |----------|--------|---------|
-| 1 | `server` | `venv\Scripts\activate` then `uvicorn main:app --reload --port 8000` |
+| 1 | `server` | `venv\Scripts\activate` then `flask --app main run --debug --port 8000` |
 | 2 | `client` | `npm run dev` |
 
 ## Git Workflow
