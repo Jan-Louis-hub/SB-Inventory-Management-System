@@ -166,24 +166,24 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 - [X] Create and activate a Python virtual environment.
 - [X] Install Flask, Flask-SQLAlchemy, Flask-Migrate, PostgreSQL driver, Flask-CORS, and a request validation library.
-- [ ] Create a Flask application factory.
-- [ ] Configure development and production settings.
-- [ ] Load secrets and database connection settings from environment variables.
-- [ ] Add a health endpoint.
-- [ ] Set up structured logging and consistent JSON error responses.
-- [ ] Pin or lock dependencies for reproducible installs.
+- [X] Create a Flask application factory.
+- [X] Configure development and production settings.
+- [X] Load secrets and database connection settings from environment variables.
+- [X] Add a health endpoint.
+- [X] Set up structured logging and consistent JSON error responses.
+- [X] Pin or lock dependencies for reproducible installs.
 
 
 ## B2. API Conventions
 
-- [ ] Use `/api/...` routes with consistent naming.
-- [ ] Use JSON request and response bodies.
-- [ ] Return appropriate HTTP status codes: 200, 201, 204, 400, 401, 403, 404, 409, and 500 where applicable.
-- [ ] Validate every incoming field on the server.
-- [ ] Return consistent error shapes, for example `{"error": "SKU already exists"}`.
-- [ ] Add pagination, filtering, and sorting with safe allowlists.
-- [ ] Avoid exposing stack traces or secrets to clients.
-- [ ] Document endpoints and example payloads.
+- [X] Use `/api/...` routes with consistent naming.
+- [X] Use JSON request and response bodies.
+- [X] Return appropriate HTTP status codes: 200, 201, 204, 400, 401, 403, 404, 409, and 500 where applicable.
+- [X] Validate every incoming field on the server.
+- [X] Return consistent error shapes, for example `{"error": "SKU already exists"}`.
+- [X] Add pagination, filtering, and sorting with safe allowlists.
+- [X] Avoid exposing stack traces or secrets to clients.
+- [X] Document endpoints and example payloads.
 
 ## B3. Products API
 
