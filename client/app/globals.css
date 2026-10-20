@@ -49,7 +49,7 @@
 
 /* Expose the palette as Tailwind utilities: bg-card, text-muted-foreground, ... */
 @theme inline {
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
   --color-background: var(--background);

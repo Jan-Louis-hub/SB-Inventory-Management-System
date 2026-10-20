@@ -284,9 +284,9 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## D1. Database Setup and Configuration
 
-- [ ] Install PostgreSQL and a database administration tool such as pgAdmin.
-- [ ] Create a database named `inventory_db`.
-- [ ] Create a dedicated application database user with only the required privileges.
+- [X] Install PostgreSQL and a database administration tool such as pgAdmin.
+- [X] Create a database named `inventory_db`.
+- [X] Create a dedicated application database user with only the required privileges.
 - [ ] Store the connection string in environment variables.
 - [ ] Configure development, testing, and production databases separately.
 - [ ] Set up Flask-Migrate/Alembic migrations.
