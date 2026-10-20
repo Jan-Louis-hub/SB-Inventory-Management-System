@@ -82,6 +82,19 @@ export function UserMenu({
           <CircleHelp />
           Help and support
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={async () => {
+            const response = await fetch("/api/auth/logout", { method: "POST" })
+            if (response.ok) {
+              router.replace("/login")
+              router.refresh()
+            }
+          }}
+        >
+          <LogOut />
+          Log out
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

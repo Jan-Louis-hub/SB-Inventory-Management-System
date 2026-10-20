@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, Numeric, func, text
+from sqlalchemy import CheckConstraint, Index, Numeric, Uuid, func, text
 
 from app.extensions import db
 
@@ -19,6 +19,13 @@ class User(db.Model):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('admin', 'manager', 'staff', 'cashier', 'stock_controller')",
+            name="ck_users_role",
+        ),
+        Index("uq_users_email_lower", func.lower(email), unique=True),
+    )
 
 
 class Category(db.Model):
@@ -34,6 +41,9 @@ class Category(db.Model):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    __table_args__ = (
+        Index("uq_categories_name_lower", func.lower(name), unique=True),
+    )
 
 
 class Product(db.Model):
@@ -43,6 +53,10 @@ class Product(db.Model):
         CheckConstraint("selling_price >= 0", name="ck_products_selling_price_nonnegative"),
         CheckConstraint("quantity >= 0", name="ck_products_quantity_nonnegative"),
         CheckConstraint("reorder_level >= 0", name="ck_products_reorder_level_nonnegative"),
+        Index("uq_products_sku_lower", text("lower(sku)"), unique=True),
+        Index("ix_products_category_id", "category_id"),
+        Index("ix_products_is_active", "is_active"),
+        Index("ix_products_name", "name"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -88,9 +102,24 @@ class StockMovement(db.Model):
     __tablename__ = "stock_movements"
     __table_args__ = (
         CheckConstraint(
-            "movement_type IN ('receipt', 'sale', 'adjustment', 'return')",
+            "movement_type IN ('receipt', 'sale', 'adjustment', 'return', 'damage')",
             name="ck_stock_movements_type",
         ),
+        CheckConstraint(
+            "quantity_change <> 0", name="ck_stock_movements_quantity_nonzero"
+        ),
+        CheckConstraint(
+            "(movement_type IN ('receipt', 'return') AND quantity_change > 0) "
+            "OR (movement_type IN ('sale', 'damage') AND quantity_change < 0) "
+            "OR movement_type = 'adjustment'",
+            name="ck_stock_movements_direction",
+        ),
+        CheckConstraint(
+            "reference_id IS NULL OR reference_type IS NOT NULL",
+            name="ck_stock_movements_reference_pair",
+        ),
+        Index("ix_stock_movements_product_created", "product_id", "created_at"),
+        Index("ix_stock_movements_user_id", "user_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -113,10 +142,17 @@ class Sale(db.Model):
     __tablename__ = "sales"
     __table_args__ = (
         CheckConstraint(
+            "status IN ('pending', 'completed', 'refunded', 'cancelled')",
+            name="ck_sales_status",
+        ),
+        CheckConstraint(
             "subtotal >= 0 AND discount_amount >= 0 AND tax_amount >= 0 "
             "AND total_amount >= 0",
             name="ck_sales_amounts_nonnegative",
         ),
+        Index("ix_sales_sold_at", "sold_at"),
+        Index("ix_sales_status", "status"),
+        Index("ix_sales_user_id", "user_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -129,6 +165,7 @@ class Sale(db.Model):
     total_amount = db.Column(Numeric(12, 2), nullable=False)
     sold_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
+    idempotency_key = db.Column(Uuid(as_uuid=True), unique=True)
 
     user = db.relationship("User")
 
@@ -141,10 +178,20 @@ class SaleItem(db.Model):
             "unit_price >= 0 AND unit_cost >= 0 AND line_total >= 0",
             name="ck_sale_items_amounts_nonnegative",
         ),
+        Index("ix_sale_items_sale_id", "sale_id"),
+        Index("ix_sale_items_product_id", "product_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id", ondelete="CASCADE"), nullable=False)
+    sale_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "sales.id",
+            ondelete="RESTRICT",
+            name="fk_sale_items_sale_id_sales",
+        ),
+        nullable=False,
+    )
     product_id = db.Column(
         db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
     )
@@ -160,7 +207,19 @@ class SaleItem(db.Model):
 class PurchaseOrder(db.Model):
     __tablename__ = "purchase_orders"
     __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'ordered', 'partial', 'received', 'cancelled')",
+            name="ck_purchase_orders_status",
+        ),
         CheckConstraint("total_amount >= 0", name="ck_purchase_orders_total_nonnegative"),
+        CheckConstraint(
+            "(status = 'received') = (received_at IS NOT NULL)",
+            name="ck_purchase_orders_received_consistent",
+        ),
+        Index("ix_purchase_orders_order_date", "order_date"),
+        Index("ix_purchase_orders_status", "status"),
+        Index("ix_purchase_orders_supplier_id", "supplier_id"),
+        Index("ix_purchase_orders_user_id", "user_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -198,11 +257,19 @@ class PurchaseOrderItem(db.Model):
             "unit_cost >= 0 AND line_total >= 0",
             name="ck_purchase_order_items_amounts_nonnegative",
         ),
+        Index("ix_purchase_order_items_order_id", "purchase_order_id"),
+        Index("ix_purchase_order_items_product_id", "product_id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
     purchase_order_id = db.Column(
-        db.Integer, db.ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False
+        db.Integer,
+        db.ForeignKey(
+            "purchase_orders.id",
+            ondelete="RESTRICT",
+            name="fk_purchase_order_items_purchase_order_id_purchase_orders",
+        ),
+        nullable=False,
     )
     product_id = db.Column(
         db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False

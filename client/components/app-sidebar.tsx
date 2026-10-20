@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { LogOut, Boxes } from "lucide-react"
 
 import {
@@ -21,6 +21,7 @@ import { ROLES, type Role } from "@/lib/roles"
 
 export function AppSidebar({ role }: { role: Role }) {
   const pathname = usePathname()
+  const router = useRouter()
   const { home, label } = ROLES[role]
 
   // The overview link only matches exactly, others match their sub-pages too
@@ -90,11 +91,20 @@ export function AppSidebar({ role }: { role: Role }) {
             </SidebarMenuItem>
           )}
           <SidebarMenuItem>
-            <SidebarMenuButton asChild className="h-10 px-3">
-              <Link href="/login">
-                <LogOut />
-                <span>Log out</span>
-              </Link>
+            <SidebarMenuButton
+              className="h-10 px-3"
+              onClick={async () => {
+                const response = await fetch("/api/auth/logout", {
+                  method: "POST",
+                })
+                if (response.ok) {
+                  router.replace("/login")
+                  router.refresh()
+                }
+              }}
+            >
+              <LogOut />
+              <span>Log out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

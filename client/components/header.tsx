@@ -5,7 +5,17 @@ import { HeaderCalendar } from "@/components/header-calendar"
 import { UserMenu } from "@/components/user-menu"
 import { ROLES, type Role } from "@/lib/roles"
 
-export function Header({ title, role }: { title: string; role: Role }) {
+export function Header({
+  title,
+  role,
+  name,
+  email,
+}: {
+  title: string
+  role: Role
+  name: string
+  email: string
+}) {
   const { home, label } = ROLES[role]
 
   return (
@@ -16,7 +26,7 @@ export function Header({ title, role }: { title: string; role: Role }) {
       <div className="ml-auto flex w-full max-w-xl items-center gap-3">
         <HeaderSearch />
         <HeaderCalendar role={role} />
-        <UserMenu home={home} roleLabel={label} />
+        <UserMenu home={home} roleLabel={label} name={name} email={email} />
       </div>
     </header>
   )
