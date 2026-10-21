@@ -36,13 +36,21 @@ const previous = net(chartData.slice(0, 3))
 const change = previous === 0 ? 0 : ((recent - previous) / Math.abs(previous)) * 100
 const up = recent >= 0
 
-export function StockFlowChart({ className }: { className?: string }) {
+export function StockFlowChart({
+  className,
+  href,
+  linkLabel,
+}: {
+  className?: string
+  href?: string
+  linkLabel?: string
+}) {
   return (
     <Panel
       title="Inventory flow"
       description="Stock in vs stock out, May to October"
-      href="/manager/reports"
-      linkLabel="Reports"
+      href={href}
+      linkLabel={linkLabel}
       className={className}
     >
       <div className="p-4">
