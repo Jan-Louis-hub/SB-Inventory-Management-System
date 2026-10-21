@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { Eye, EyeOff } from "lucide-react"
 import { cn } from "cn"
-import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -16,96 +17,92 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox"
-
-const accountTypes = [
-  { value: "inventory_manager", label: "Inventory Manager" },
-  { value: "stock_controller", label: "Stock Controller" },
-  { value: "staff_member", label: "Staff Member" },
-]
+type RegisterResponse = {
+  error?: string
+}
 
 export function RegisterForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
+  const router = useRouter()
   const [showPassword, setShowPassword] = React.useState(false)
-  const [accountType, setAccountType] = React.useState<string | null>(null)
+  const [error, setError] = React.useState("")
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
-const accountTypes = [
-  { value: "inventory_manager", label: "Inventory Manager" },
-  { value: "stock_controller", label: "Stock Controller" },
-  { value: "staff_member", label: "Staff Member" },
-]
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError("")
+    setIsSubmitting(true)
+    const formData = new FormData(event.currentTarget)
 
-type AccountType = (typeof accountTypes)[number]
-const NONE: AccountType = { value: "", label: "None" }
-const accountTypeOptions = [NONE, ...accountTypes]
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.get("name"),
+          email: formData.get("email"),
+          password: formData.get("password"),
+        }),
+      })
+      const result = (await response.json()) as RegisterResponse
+      if (!response.ok) {
+        setError(result.error ?? "Unable to create your account. Please try again.")
+        return
+      }
+      router.replace("/staff")
+      router.refresh()
+    } catch {
+      setError("Unable to reach the application server. Please try again.")
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card className="overflow-hidden p-0">
         <CardContent className="grid p-0 md:grid-cols-2">
-          <form className="p-6 md:p-8">
+          <form className="p-6 md:p-8" onSubmit={handleSubmit}>
             <FieldGroup>
-                <Combobox
-                  items={accountTypeOptions}
-                  value={accountType}
-                  onValueChange={(item) =>
-                    setAccountType(item && item.value !== "" ? item : null)
-                  }
-                  name="accountType"
-                >
-                  <ComboboxInput
-                    placeholder="Register as"
-                    className="w-1/2 min-w-40 self-start border-0! bg-transparent! shadow-none! ring-0! has-[[data-slot=input-group-control]:focus-visible]:ring-0! dark:bg-transparent! [&_input]:caret-transparent [&_input]:cursor-pointer"
-                  />
-                  <ComboboxContent>
-                    <ComboboxEmpty>No account type found.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(item) => (
-                        <ComboboxItem key={item.value || "none"} value={item}>
-                          {item.label}
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
-              <div className="flex mt-3 flex-col items-center gap-2 text-center">
+              <div className="flex flex-col items-center gap-2 text-center">
                 <h1 className="text-2xl font-bold">Create an account</h1>
                 <p className="text-balance text-muted-foreground">
-                  Sign up for your SB Inventory account
+                  Create a staff account for your SB Inventory shop
                 </p>
               </div>
+              <Field>
+                <FieldLabel htmlFor="name">Full name</FieldLabel>
+                <Input
+                  id="name"
+                  name="name"
+                  type="text"
+                  autoComplete="name"
+                  maxLength={120}
+                  required
+                />
+              </Field>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input
                   id="email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="m@example.com"
                   required
                 />
               </Field>
               <Field>
-                <div className="flex items-center">
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <a
-                    href="#"
-                    className="ml-auto text-sm underline-offset-2 hover:underline"
-                  >
-                    Forgot your password?
-                  </a>
-                </div>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
                 <div className="relative">
                   <Input
                     id="password"
+                    name="password"
                     type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    minLength={8}
                     className="pr-10"
                     required
                   />
@@ -114,17 +111,29 @@ const accountTypeOptions = [NONE, ...accountTypes]
                     variant="ghost"
                     size="icon-sm"
                     className="absolute inset-y-0 right-0.5 my-auto text-muted-foreground"
-                    onClick={() => setShowPassword((prev) => !prev)}
+                    onClick={() => setShowPassword((previous) => !previous)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
                     aria-pressed={showPassword}
                   >
                     {showPassword ? <EyeOff /> : <Eye />}
                   </Button>
                 </div>
+                <FieldDescription>
+                  Use at least 8 characters. New registrations receive the staff
+                  role; a manager must assign privileged roles.
+                </FieldDescription>
               </Field>
+              {error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              )}
               <Field>
-                <Button type="submit">Create Account</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Creating account..." : "Create Account"}
+                </Button>
               </Field>
+              
               <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
                 Or continue with
               </FieldSeparator>
@@ -169,7 +178,7 @@ const accountTypeOptions = [NONE, ...accountTypes]
             <img
               src="/background.jpg"
               alt="Image"
-              className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
+              className="absolute inset-0 h-full w-full object-cover "
             />
             <FieldDescription className="absolute inset-x-0 bottom-0 px-14 pb-8 text-left text-xs">
               By clicking continue, you agree to our <a href="#">Terms of Service</a>{" "}

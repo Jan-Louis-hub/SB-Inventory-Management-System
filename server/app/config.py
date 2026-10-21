@@ -7,8 +7,7 @@ class BaseConfig:
 
 class DevelopmentConfig(BaseConfig):
     DEBUG = True
-    SECRET_KEY = "development-only-insecure-key"
-    SQLALCHEMY_DATABASE_URI = "sqlite:///inventory.db"
+    SECRET_KEY = None
 
 
 class ProductionConfig(BaseConfig):
@@ -17,7 +16,7 @@ class ProductionConfig(BaseConfig):
 
 class TestingConfig(BaseConfig):
     TESTING = True
-    SECRET_KEY = "test-only-key"
+    SECRET_KEY = "test-only-key-that-is-at-least-32-bytes-long"
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
 
 

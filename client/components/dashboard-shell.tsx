@@ -6,15 +6,22 @@ import { ROLES, type Role } from "@/lib/roles"
 export function DashboardShell({
   role,
   children,
+  user,
 }: {
   role: Role
   children: React.ReactNode
+  user: { name: string; email: string }
 }) {
   return (
     <SidebarProvider>
       <AppSidebar role={role} />
       <SidebarInset>
-        <Header title={ROLES[role].label} role={role} />
+        <Header
+          title={ROLES[role].label}
+          role={role}
+          name={user.name}
+          email={user.email}
+        />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </SidebarInset>
     </SidebarProvider>

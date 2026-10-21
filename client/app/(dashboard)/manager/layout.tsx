@@ -1,5 +1,17 @@
 import { DashboardShell } from "@/components/dashboard-shell"
+import { requireUserRole } from "@/lib/server-auth"
 
-export default function ManagerLayout({ children }: { children: React.ReactNode }) {
-  return <DashboardShell role="inventory_manager">{children}</DashboardShell>
+export const instant = false
+
+export default async function ManagerLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  const user = await requireUserRole("inventory_manager")
+  return (
+    <DashboardShell role="inventory_manager" user={user}>
+      {children}
+    </DashboardShell>
+  )
 }
