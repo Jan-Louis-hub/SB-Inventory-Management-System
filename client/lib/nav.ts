@@ -35,12 +35,13 @@ export const NAV: Record<Role, NavItem[]> = {
     { title: "Inventory", href: "/staff/inventory", icon: Package },
     { title: "Requests", href: "/staff/requests", icon: Inbox },
   ],
-
 }
-  export const SETTINGS: Partial<Record<Role, NavItem>> = {
-    inventory_manager: {
-      title: "Settings",
-      href: "/manager/settings",
-      icon: Settings,
-    },
-  }
+
+// Pinned to the bottom of the sidebar, above Log out.
+export const SETTINGS: Partial<Record<Role, NavItem>> = {
+  inventory_manager: {
+    title: "Settings",
+    href: "/manager/settings",
+    icon: Settings,
+  },
+}

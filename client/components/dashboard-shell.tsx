@@ -14,7 +14,7 @@ export function DashboardShell({
     <SidebarProvider>
       <AppSidebar role={role} />
       <SidebarInset>
-        <Header title={ROLES[role].label} />
+        <Header title={ROLES[role].label} role={role} />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </SidebarInset>
     </SidebarProvider>
