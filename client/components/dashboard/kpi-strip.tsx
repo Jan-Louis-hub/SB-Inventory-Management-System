@@ -9,7 +9,7 @@ export type Kpi = {
   note: string
   tone: "good" | "bad" | "neutral"
   icon: LucideIcon
-  href: string
+  href?: string
   alert?: boolean
 }
 
@@ -23,12 +23,8 @@ const TONE = {
 export function KpiStrip({ items }: { items: Kpi[] }) {
   return (
     <div className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border bg-border lg:grid-cols-4">
-      {items.map((s) => (
-        <Link
-          key={s.title}
-          href={s.href}
-          className="bg-card transition-colors hover:bg-muted/40"
-        >
+      {items.map((s) => {
+        const content = (
           <div
             className={cn(
               "flex h-full flex-col gap-3 p-4",
@@ -51,8 +47,22 @@ export function KpiStrip({ items }: { items: Kpi[] }) {
             </p>
             <p className={cn("text-xs", TONE[s.tone])}>{s.note}</p>
           </div>
-        </Link>
-      ))}
+        )
+
+        return s.href ? (
+          <Link
+            key={s.title}
+            href={s.href}
+            className="bg-card transition-colors hover:bg-muted/40"
+          >
+            {content}
+          </Link>
+        ) : (
+          <div key={s.title} className="bg-card">
+            {content}
+          </div>
+        )
+      })}
     </div>
   )
 }
