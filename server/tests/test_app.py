@@ -15,6 +15,8 @@ from app.services.inventory import (
 )
 from app.models import (
     Category,
+    OAuthIdentity,
+    OAuthLoginCode,
     Product,
     PurchaseOrder,
     PurchaseOrderItem,
@@ -176,6 +178,204 @@ def test_profile_requires_a_valid_bearer_token(client):
     assert invalid.status_code == 401
 
 
+def test_oauth_requires_provider_configuration(client):
+    client.application.config["GOOGLE_CLIENT_ID"] = None
+    client.application.config["GOOGLE_CLIENT_SECRET"] = None
+    response = client.get("/api/auth/oauth/google")
+
+    assert response.status_code == 503
+    assert response.json == {"error": "Google sign-in is not configured"}
+
+
+def test_apple_client_secret_is_generated_from_signing_key(client):
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from app.api.auth import _oauth_client_secret
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    client.application.config.update(
+        APPLE_TEAM_ID="test-team",
+        APPLE_KEY_ID="test-key",
+        APPLE_PRIVATE_KEY=private_key_pem.replace("\n", "\\n"),
+    )
+
+    with client.application.app_context():
+        client_secret = _oauth_client_secret("apple", "com.example.inventory")
+
+    claims = jwt.decode(
+        client_secret,
+        private_key.public_key(),
+        algorithms=["ES256"],
+        audience="https://appleid.apple.com",
+    )
+    assert claims["iss"] == "test-team"
+    assert claims["sub"] == "com.example.inventory"
+    assert claims["exp"] - claims["iat"] == 300
+
+
+def test_oauth_session_cookie_supports_apple_form_post(client):
+    assert client.application.config["SESSION_COOKIE_SAMESITE"] == "None"
+    assert client.application.config["SESSION_COOKIE_SECURE"] is True
+
+
+def test_oauth_identity_persists_verified_profile_and_links_email(client):
+    from app.api.auth import _save_oauth_user
+
+    with client.application.app_context():
+        existing_user = User(
+            name="Existing Staff",
+            email="staff@example.test",
+            password_hash="unused-hash",
+            role="staff",
+        )
+        db.session.add(existing_user)
+        db.session.commit()
+
+        user = _save_oauth_user(
+            "google",
+            {
+                "sub": "google-subject-1",
+                "email": "staff@example.test",
+                "email_verified": True,
+                "name": "Shop Staff",
+            },
+        )
+        db.session.commit()
+
+        assert user.id == existing_user.id
+        assert user.name == "Existing Staff"
+        assert user.email == "staff@example.test"
+        assert user.role == "staff"
+        assert db.session.query(User).count() == 1
+        identity = OAuthIdentity.query.one()
+        assert identity.provider == "google"
+        assert identity.subject == "google-subject-1"
+        assert identity.user_id == user.id
+
+
+def test_oauth_callback_saves_provider_user_and_exchanges_session(client, monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+
+    from app.api import auth
+
+    class ProviderClient:
+        def authorize_access_token(self):
+            return {
+                "userinfo": {
+                    "sub": "google-subject-2",
+                    "email": "new.staff@example.test",
+                    "email_verified": True,
+                    "name": "New Staff",
+                }
+            }
+
+    monkeypatch.setattr(auth, "_oauth_client", lambda _provider: ProviderClient())
+    callback = client.get("/api/auth/oauth/google/callback")
+
+    assert callback.status_code == 303
+    assert callback.location.startswith(
+        "http://localhost:3000/api/auth/oauth/exchange?code="
+    )
+    code = parse_qs(urlparse(callback.location).query)["code"][0]
+    exchange = client.post("/api/auth/oauth/exchange", json={"code": code})
+
+    assert exchange.status_code == 200
+    assert exchange.json["user"]["email"] == "new.staff@example.test"
+    with client.application.app_context():
+        assert db.session.query(User).count() == 1
+        assert OAuthIdentity.query.one().subject == "google-subject-2"
+
+
+def test_apple_form_post_callback_uses_first_login_name(client, monkeypatch):
+    import json
+    from urllib.parse import parse_qs, urlparse
+
+    from app.api import auth
+
+    class ProviderClient:
+        def authorize_access_token(self):
+            return {
+                "userinfo": {
+                    "sub": "apple-subject-1",
+                    "email": "new.apple@example.test",
+                    "email_verified": "true",
+                }
+            }
+
+    monkeypatch.setattr(auth, "_oauth_client", lambda _provider: ProviderClient())
+    callback = client.post(
+        "/api/auth/oauth/apple/callback",
+        data={
+            "code": "provider-code",
+            "state": "provider-state",
+            "user": json.dumps({"name": {"firstName": "Apple", "lastName": "Staff"}}),
+        },
+    )
+
+    assert callback.status_code == 303
+    code = parse_qs(urlparse(callback.location).query)["code"][0]
+    exchange = client.post("/api/auth/oauth/exchange", json={"code": code})
+
+    assert exchange.status_code == 200
+    assert exchange.json["user"]["name"] == "Apple Staff"
+
+
+def test_oauth_rejects_unverified_email_without_creating_user(client):
+    from app.api.auth import _save_oauth_user
+
+    with client.application.app_context():
+        user = _save_oauth_user(
+            "apple",
+            {
+                "sub": "apple-subject-1",
+                "email": "staff@example.test",
+                "email_verified": False,
+            },
+        )
+
+        assert user is None
+        assert db.session.query(User).count() == 0
+        assert db.session.query(OAuthIdentity).count() == 0
+
+
+def test_oauth_exchange_code_is_single_use(client):
+    import hashlib
+    from datetime import datetime, timedelta, timezone
+
+    code = "single-use-test-code"
+    with client.application.app_context():
+        user = User(
+            name="Shop Staff",
+            email="staff@example.test",
+            password_hash="unused-hash",
+            role="staff",
+        )
+        db.session.add(user)
+        db.session.flush()
+        db.session.add(
+            OAuthLoginCode(
+                code_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(),
+                user_id=user.id,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+            )
+        )
+        db.session.commit()
+
+    first = client.post("/api/auth/oauth/exchange", json={"code": code})
+    replay = client.post("/api/auth/oauth/exchange", json={"code": code})
+
+    assert first.status_code == 200
+    assert "token" in first.json
+    assert replay.status_code == 401
+
+
 def test_not_found_response_is_json(client):
     response = client.get("/api/does-not-exist")
 
@@ -315,6 +515,8 @@ def test_migrations_create_all_inventory_tables(client):
             "sale_items",
             "purchase_orders",
             "purchase_order_items",
+            "oauth_identities",
+            "oauth_login_codes",
         }
         index_names = set(
             db.session.execute(
@@ -354,6 +556,57 @@ def test_migration_upgrades_from_initial_revision():
         assert "idempotency_key" in {
             column["name"] for column in inspect(db.engine).get_columns("sales")
         }
+
+
+def test_migration_replaces_legacy_user_role_constraint():
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    app = create_app(
+        {
+            "APP_ENV": "testing",
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+        }
+    )
+    runner = app.test_cli_runner()
+    initial = runner.invoke(args=["db", "upgrade", "ab41c76f2d09"])
+    assert initial.exit_code == 0, initial.output
+
+    with app.app_context():
+        with db.engine.begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            with operations.batch_alter_table("users") as batch_op:
+                batch_op.drop_constraint("ck_users_role", type_="check")
+                batch_op.create_check_constraint(
+                    "users_role_check",
+                    "role IN ('admin', 'manager', 'staff', 'cashier')",
+                )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX uq_users_email_lower "
+                "ON users (lower(email))"
+            )
+
+    upgraded = runner.invoke(args=["db", "upgrade"])
+    assert upgraded.exit_code == 0, upgraded.output
+    with app.app_context():
+        user = User(
+            name="Demo Controller",
+            email="controller@example.test",
+            password_hash="unused-hash",
+            role="stock_controller",
+        )
+        db.session.add(user)
+        db.session.commit()
+        assert (
+            db.session.execute(
+                text(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type = 'index' AND name = 'uq_users_email_lower'"
+                )
+            ).scalar()
+            == 1
+        )
 
 
 def test_email_sku_and_category_uniqueness_is_case_insensitive(client):
@@ -456,6 +709,30 @@ def test_seed_demo_creates_consistent_clothing_inventory_and_is_idempotent(clien
         assert movement_totals == products
 
 
+def test_seed_demo_accounts_create_manager_and_controller_logins(client):
+    runner = client.application.test_cli_runner()
+
+    first_result = runner.invoke(args=["seed-demo-accounts"])
+    second_result = runner.invoke(args=["seed-demo-accounts"])
+
+    assert first_result.exit_code == 0, first_result.output
+    assert second_result.exit_code == 0, second_result.output
+    for email, password, role in (
+        ("manager@demo.example.test", "ManagerDemo123!", "inventory_manager"),
+        (
+            "controller@demo.example.test",
+            "ControllerDemo123!",
+            "stock_controller",
+        ),
+    ):
+        response = client.post(
+            "/api/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert response.status_code == 200
+        assert response.json["user"]["role"] == role
+
+
 def test_demo_seed_is_rejected_in_production():
     app = create_app(
         {
@@ -469,6 +746,12 @@ def test_demo_seed_is_rejected_in_production():
 
     assert isinstance(result.exception, RuntimeError)
     assert str(result.exception) == "Demo data cannot be seeded in production"
+
+    account_result = app.test_cli_runner().invoke(args=["seed-demo-accounts"])
+    assert isinstance(account_result.exception, RuntimeError)
+    assert str(account_result.exception) == (
+        "Demo accounts cannot be created in production"
+    )
 
 
 def test_create_sale_records_stock_changes_and_price_snapshots(client):

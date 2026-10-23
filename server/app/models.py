@@ -28,6 +28,34 @@ class User(db.Model):
     )
 
 
+class OAuthIdentity(db.Model):
+    __tablename__ = "oauth_identities"
+    __table_args__ = (
+        db.UniqueConstraint("provider", "subject", name="uq_oauth_identity_provider_subject"),
+        db.UniqueConstraint("provider", "user_id", name="uq_oauth_identity_provider_user"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    provider = db.Column(db.String(20), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    user = db.relationship("User")
+
+
+class OAuthLoginCode(db.Model):
+    __tablename__ = "oauth_login_codes"
+    __table_args__ = (Index("ix_oauth_login_codes_expires_at", "expires_at"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    code_hash = db.Column(db.String(64), nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+
+    user = db.relationship("User")
+
+
 class Category(db.Model):
     __tablename__ = "categories"
 
