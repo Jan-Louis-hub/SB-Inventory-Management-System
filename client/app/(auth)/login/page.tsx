@@ -1,10 +1,15 @@
+import { Suspense } from "react"
+
 import { LoginForm } from "@/components/login-form"
+import { isMockAuthEnabled } from "@/lib/auth-proxy"
 
 export default function LoginPage() {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-muted p-6 md:p-10">
       <div className="w-full max-w-sm md:max-w-4xl">
-        <LoginForm />
+        <Suspense fallback={<div className="h-96" />}>
+          <LoginForm mockAuthEnabled={isMockAuthEnabled()} />
+        </Suspense>
       </div>
     </div>
   )

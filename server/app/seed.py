@@ -3,6 +3,7 @@ from decimal import Decimal
 from secrets import token_urlsafe
 
 from pwdlib import PasswordHash
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models import (
@@ -18,6 +19,67 @@ from app.models import (
 )
 
 DEMO_ADMIN_EMAIL = "owner@threadandneedle.test"
+DEMO_ACCOUNTS = (
+    {
+        "name": "Demo Manager",
+        "email": "manager@demo.example.test",
+        "password": "ManagerDemo123!",
+        "role": "manager",
+    },
+    {
+        "name": "Demo Controller",
+        "email": "controller@demo.example.test",
+        "password": "ControllerDemo123!",
+        "role": "stock_controller",
+    },
+)
+password_hash = PasswordHash.recommended()
+
+
+def seed_demo_accounts():
+    existing_users = {
+        user.email.lower(): user
+        for user in db.session.query(User)
+        .filter(
+            func.lower(User.email).in_(
+                [account["email"] for account in DEMO_ACCOUNTS]
+            )
+        )
+        .all()
+    }
+    new_users = []
+
+    for account in DEMO_ACCOUNTS:
+        existing = existing_users.get(account["email"])
+        if existing is not None:
+            if (
+                existing.role != account["role"]
+                or not existing.is_active
+                or not password_hash.verify(
+                    account["password"], existing.password_hash
+                )
+            ):
+                raise RuntimeError(
+                    f"Demo account {account['email']} already exists with "
+                    "different credentials or role; it was not changed"
+                )
+            continue
+
+        new_users.append(
+            User(
+                name=account["name"],
+                email=account["email"],
+                password_hash=password_hash.hash(account["password"]),
+                role=account["role"],
+            )
+        )
+
+    if not new_users:
+        return False
+
+    db.session.add_all(new_users)
+    db.session.commit()
+    return True
 
 
 def seed_demo_data():
@@ -27,7 +89,7 @@ def seed_demo_data():
     admin = User(
         name="Alex Mokoena",
         email=DEMO_ADMIN_EMAIL,
-        password_hash=PasswordHash.recommended().hash(token_urlsafe(32)),
+        password_hash=password_hash.hash(token_urlsafe(32)),
         role="admin",
     )
     db.session.add(admin)

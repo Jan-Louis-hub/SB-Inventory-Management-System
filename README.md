@@ -120,6 +120,7 @@ From the `server` directory with the virtual environment active:
 
 - Health endpoint: http://localhost:8000/api/health
 - API conventions and example payloads: `server/API_CONVENTIONS.md`
+- Demo login accounts and backend run instructions: `server/RUN_BACKEND.md`
 - Database setup, migration, connectivity, and testing guide:
   `server/DATABASE_SETUP_AND_TESTING.md`
 
@@ -177,3 +178,5 @@ git push
 ```
 
 Never commit `.env` files, credentials, database dumps, or production data. Use `.env.example` only for variable names and non-secret placeholders.
+
+Use  manager@demo.local ,  controller@demo.local , or  staff@demo.local —any password works. TO login for the diffrent roles

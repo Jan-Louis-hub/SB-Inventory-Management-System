@@ -2,8 +2,7 @@
 
 All API routes live under `/api` and use lowercase, plural resource names (for
 example, `/api/items`). Requests and responses use JSON. The application
-currently implements only `GET /api/health`; inventory routes should follow the
-contracts below when their data models and authorization rules are added.
+implements health, authentication, and the documented inventory routes.
 
 ## Implemented endpoints
 
@@ -13,6 +12,9 @@ contracts below when their data models and authorization rules are added.
 | `POST` | `/api/auth/register` | `201` with the staff user and access token |
 | `POST` | `/api/auth/login` | `200` with the user and access token |
 | `GET` | `/api/auth/me` | `200` with the authenticated user |
+| `GET` | `/api/auth/oauth/{google,apple}` | Redirect to the identity provider |
+| `GET/POST` | `/api/auth/oauth/{provider}/callback` | Verify provider identity and persist the user |
+| `POST` | `/api/auth/oauth/exchange` | Exchange a short-lived, single-use code for a session token |
 
 Registration accepts only `name`, `email`, and `password`; new self-registered
 accounts always receive the `staff` role. Passwords must be at least 8
@@ -24,9 +26,31 @@ The Next.js frontend proxies login and registration through same-origin
 `/api/auth/*` routes and keeps the backend access token in an HTTP-only,
 SameSite=Lax cookie. Do not move that token into `localStorage` or expose it to
 browser JavaScript. Configure the Next.js server's `BACKEND_API_URL` to reach
-Flask; it defaults to `http://127.0.0.1:8000` for local development. Add
+Flask; it defaults to `http://localhost:8000` for local development. Add
 request rate limiting and account recovery before exposing authentication to
 the public internet.
+
+Google and Apple sign-in use OpenID Connect. Set `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` from a Google OAuth web client. Set `APPLE_CLIENT_ID` to
+the Apple Services ID. For Apple, either set `APPLE_CLIENT_SECRET` to a valid
+Sign in with Apple client-secret JWT, or provide `APPLE_TEAM_ID`, `APPLE_KEY_ID`,
+and `APPLE_PRIVATE_KEY` from an Apple Sign in with Apple key; the server creates
+a short-lived client-secret JWT for each provider request. Set a PEM private
+key in `APPLE_PRIVATE_KEY`, escaping newlines as `\n` when needed. Register
+`<OAUTH_BACKEND_URL>/api/auth/oauth/google/callback` and
+`<OAUTH_BACKEND_URL>/api/auth/oauth/apple/callback` with the providers.
+`OAUTH_BACKEND_URL` must be reachable by the user's browser and defaults to
+`http://localhost:8000`; `OAUTH_FRONTEND_URL` defaults to
+`http://localhost:3000`. Apple web sign-in must allow the `email` and `name`
+scopes and POST back to its callback. Configure all credentials in the private
+`server/.env` file. Set both `BACKEND_API_URL` and `NEXT_PUBLIC_AUTH_API_URL` in
+`client/.env.local` so the latter is the same browser-reachable origin as
+`OAUTH_BACKEND_URL` in `server/.env`. Keep the host identical (including
+`localhost` versus `127.0.0.1`) so the OAuth state cookie survives the callback.
+OAuth identities are stored in `oauth_identities`; verified
+provider email addresses are matched to existing accounts, and new users are
+created with the staff role. The temporary code used to hand the session to
+Next.js is stored only as a hash and can be exchanged once.
 
 ## Resource response examples
 

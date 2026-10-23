@@ -11,7 +11,7 @@ from app.api import api
 from app.config import CONFIGS
 from app.extensions import db, migrate
 from app.logging_config import configure_logging
-from app.seed import seed_demo_data
+from app.seed import seed_demo_accounts, seed_demo_data
 
 
 def create_app(config=None):
@@ -49,6 +49,28 @@ def create_app(config=None):
         isinstance(config, dict) and "SECRET_KEY" not in config
     ):
         app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or app.config["SECRET_KEY"]
+
+    for setting in (
+        "OAUTH_FRONTEND_URL",
+        "OAUTH_BACKEND_URL",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "APPLE_CLIENT_ID",
+        "APPLE_CLIENT_SECRET",
+        "APPLE_TEAM_ID",
+        "APPLE_KEY_ID",
+        "APPLE_PRIVATE_KEY",
+    ):
+        if setting not in app.config:
+            app.config[setting] = os.getenv(setting)
+    app.config["OAUTH_FRONTEND_URL"] = (
+        app.config["OAUTH_FRONTEND_URL"] or "http://localhost:3000"
+    ).rstrip("/")
+    app.config["OAUTH_BACKEND_URL"] = (
+        app.config["OAUTH_BACKEND_URL"] or "http://localhost:8000"
+    ).rstrip("/")
+    app.config["SESSION_COOKIE_SAMESITE"] = "None"
+    app.config["SESSION_COOKIE_SECURE"] = True
 
     database_variables = {
         "development": ("DEVELOPMENT_DATABASE_URL",),
@@ -142,6 +164,16 @@ def enable_sqlite_foreign_keys(connection, _record):
 
 
 def register_database_commands(app):
+    @app.cli.command("seed-demo-accounts")
+    def seed_demo_accounts_command():
+        """Create local demo manager and stock-controller accounts."""
+        if app.config["APP_ENV"] == "production":
+            raise RuntimeError("Demo accounts cannot be created in production")
+        if seed_demo_accounts():
+            app.logger.info("Demo manager and stock-controller accounts created")
+        else:
+            app.logger.info("Demo accounts already exist; no changes made")
+
     @app.cli.command("seed-demo")
     def seed_demo():
         """Add sample clothing-store inventory and transactions."""
