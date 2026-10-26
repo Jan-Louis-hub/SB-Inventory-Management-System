@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { money } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import {
   getOrdersForRole,
@@ -33,9 +34,6 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
 }
 
 const PAGE_SIZES = [5, 10, 20]
-
-// Change the currency to match your business
-const money = new Intl.NumberFormat("en", { style: "currency", currency: "USD" })
 
 // 1 … 4 5 6 … 12 style page list
 function getPageItems(current: number, total: number): (number | "…")[] {

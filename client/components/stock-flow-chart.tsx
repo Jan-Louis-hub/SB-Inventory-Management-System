@@ -13,14 +13,14 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart"
 
-// Placeholder data. Replace with your stock movement totals per month.
+// Garments received and sold at Harbour Lane, May to October.
 const chartData = [
-  { month: "May", stockIn: 520, stockOut: 375 },
-  { month: "Jun", stockIn: 610, stockOut: 400 },
-  { month: "Jul", stockIn: 340, stockOut: 425 },
-  { month: "Aug", stockIn: 580, stockOut: 390 },
-  { month: "Sep", stockIn: 360, stockOut: 480 },
-  { month: "Oct", stockIn: 640, stockOut: 410 },
+  { month: "May", stockIn: 90, stockOut: 78 },
+  { month: "Jun", stockIn: 104, stockOut: 86 },
+  { month: "Jul", stockIn: 88, stockOut: 70 },
+  { month: "Aug", stockIn: 110, stockOut: 80 },
+  { month: "Sep", stockIn: 86, stockOut: 98 },
+  { month: "Oct", stockIn: 124, stockOut: 78 },
 ]
 
 const chartConfig = {
