@@ -142,28 +142,6 @@ data.
 
 ## 5. Run the frontend and backend
 
-Activate the backend virtual environment so the combined development command
-uses the installed Flask dependencies. From the repository root:
-
-**Windows PowerShell**
-
-```powershell
-.\server\venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks activation, allow it for this terminal only, then retry:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\server\venv\Scripts\Activate.ps1
-```
-
-**macOS or Linux**
-
-```bash
-source server/venv/bin/activate
-```
-
 With the environment active, start both services from the repository root:
 
 ```bash
