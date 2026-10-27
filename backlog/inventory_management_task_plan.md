@@ -1,9 +1,26 @@
 # Small Business Inventory Management System
 ## Frontend, Backend, and Database Task Plan
 
-**Project stack:** React + Vite, Python + Flask, PostgreSQL  
+**Project stack:** Next.js App Router, React, TypeScript, Python + Flask, SQLAlchemy/Alembic, PostgreSQL
 **Project type:** Browser-based web application  
 **Initial goal:** Build a reliable inventory system for a small business, starting locally and adding production deployment after the core features work.
+
+## Current project status
+
+The summary below is the current progress reference. The detailed checkboxes
+later in this document are a historical planning list and have not all been
+reconciled with the implemented application; do not use them alone to judge
+what is complete.
+
+- The frontend is a Next.js App Router application, not Vite or React Router.
+- The Flask backend includes authentication, inventory, suppliers, purchase
+  orders, stock movements, stock counts, stock requests, settings, and sales.
+- The frontend includes role-based dashboards, inventory and operations pages,
+  reports, and manager sales entry/history.
+- The backend test suite passes. Local PostgreSQL returned `SELECT 1`, and
+  Alembic reports revision `f7a8b9c0d1e2` as the current head.
+- Continue improving frontend interaction tests and accessibility, sales and
+  reporting workflows, production deployment, and database backup/recovery.
 
 ---
 
@@ -38,14 +55,14 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ---
 
-# 3. Frontend Tasks — React
+# 3. Frontend Tasks — Next.js and React
 
 ## F1. Frontend Project Setup
 
-- [X] Create a React application with Vite.
-- [X] Install and configure React Router.
-- [X] Set up a shared Axios or Fetch API client.
-- [X] Configure the API base URL through environment variables.
+- [X] Build the frontend with Next.js App Router, React, and TypeScript.
+- [X] Use Next.js routing for pages and API routes.
+- [X] Set up shared Fetch API clients for backend resources.
+- [X] Configure backend connectivity through environment variables and the API proxy.
 - [X] Create a consistent folder structure for pages, components, API functions, and styles.
 - [X] Establish a responsive design system: colors, spacing, typography, buttons, inputs, cards, and tables.
 - [X] Add loading, empty, success, and error states.
@@ -120,13 +137,13 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## F8. Sales
 
-- [ ] Build a sales entry screen with product search.
-- [ ] Allow multiple line items per sale.
-- [ ] Display available stock and warn when a requested quantity exceeds it.
-- [ ] Calculate subtotal and total for preview.
-- [ ] Submit the sale to the API for authoritative validation and calculation.
+- [X] Build a manager sales entry screen.
+- [X] Allow multiple line items per sale.
+- [X] Display available stock and prevent adding more than is available.
+- [X] Submit the sale to the API for authoritative validation and calculation.
 - [ ] Display the completed sale receipt/details.
-- [ ] Build a sales history page with date and status filters.
+- [X] Build a searchable sales history page.
+- [ ] Add date and status filters to sales history.
 - [ ] Support cancellation or refunds through explicit workflows, not by silently deleting sales.
 
 ## F9. Reports and Export
@@ -150,11 +167,12 @@ Build and test one vertical slice at a time. For example, complete the database 
 
 ## F11. Frontend Testing
 
-- [ ] Test important components and form validation with Vitest and React Testing Library.
-- [ ] Test loading, empty, error, and successful API states.
+- [X] Add Vitest and React Testing Library coverage for the home and sales views.
+- [X] Test successful sale submission, stock quantity validation, and an API loading error.
+- [ ] Expand coverage to all important components and loading, empty, error, and success states.
 - [ ] Test product search, filtering, and pagination.
 - [ ] Test critical user flows in a browser.
-- [ ] Ensure production builds complete successfully.
+- [X] Ensure production builds complete successfully.
 
 **Frontend completion criteria:** Staff can use the browser interface to complete the supported workflows, and all displayed business data comes from the API.
 
@@ -535,21 +553,14 @@ A task is complete only when:
 - [ ] The feature has been tested with realistic sample data.
 - [ ] Any relevant setup or API documentation has been updated.
 
-# 8. First Sprint — Start Here
+# 8. Remaining Milestones
 
-Complete these tasks in order:
+These are follow-up goals, not prerequisites for running the existing
+application:
 
-1. [ ] Install Node.js, Python, PostgreSQL, and VS Code.
-2. [ ] Create the `frontend` and `backend` directories.
-3. [ ] Start the React app using Vite.
-4. [ ] Set up a Flask virtual environment and install dependencies.
-5. [ ] Create `inventory_db` and configure the database connection.
-6. [ ] Add the Flask health endpoint and verify it in a browser.
-7. [ ] Create the initial database migration and product model.
-8. [ ] Implement `GET /api/products` and `POST /api/products`.
-9. [ ] Build the React product table and add-product form.
-10. [ ] Verify that a product saves to PostgreSQL and remains after refreshing the browser.
-11. [ ] Add tests for duplicate SKUs and invalid product data.
-12. [ ] Commit the working milestone to Git.
-
-**First milestone:** A user can open the browser, create a product, see it in the product list, and retrieve it again from PostgreSQL after refreshing the page.
+1. Expand frontend component and browser-flow tests beyond the current home and
+   sales coverage.
+2. Add sale details/receipts, date and status filters, and explicit refund or
+   cancellation workflows.
+3. Complete API-backed dashboard metrics and date-range sales reporting.
+4. Validate production deployment, monitoring, and database backup/recovery.
