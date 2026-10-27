@@ -517,6 +517,10 @@ def test_migrations_create_all_inventory_tables(client):
             "purchase_order_items",
             "oauth_identities",
             "oauth_login_codes",
+            "business_settings",
+            "stock_counts",
+            "stock_count_lines",
+            "stock_requests",
         }
         index_names = set(
             db.session.execute(
@@ -880,3 +884,177 @@ def test_receive_purchase_order_item_rejects_zero_quantity(client):
     with client.application.app_context():
         with pytest.raises(InventoryOperationError, match="positive integer"):
             receive_purchase_order_item(item_id=1, quantity=0, user_id=1)
+
+
+def _api_auth_headers(client):
+    registration = client.post(
+        "/api/auth/register",
+        json={
+            "name": "Inventory Staff",
+            "email": "inventory.staff@example.test",
+            "password": "correct-horse-battery",
+        },
+    )
+    assert registration.status_code == 201
+    return {"Authorization": f"Bearer {registration.json['token']}"}
+
+
+def test_product_and_category_apis_preserve_initial_stock_history(client):
+    headers = _api_auth_headers(client)
+    category_response = client.post(
+        "/api/categories",
+        headers=headers,
+        json={"name": "Clothing", "description": "Wearables"},
+    )
+    assert category_response.status_code == 201
+    category_id = category_response.json["category"]["id"]
+    duplicate_category = client.post(
+        "/api/categories",
+        headers=headers,
+        json={"name": "CLOTHING"},
+    )
+    assert duplicate_category.status_code == 409
+
+    product_response = client.post(
+        "/api/products",
+        headers=headers,
+        json={
+            "sku": "TEE-001",
+            "name": "Basic Tee",
+            "category_id": category_id,
+            "cost_price": "4.50",
+            "selling_price": "9.99",
+            "quantity": 5,
+        },
+    )
+    assert product_response.status_code == 201
+    product = product_response.json["product"]
+    assert product["cost_price"] == "4.50"
+    assert product["selling_price"] == "9.99"
+    assert product["quantity"] == 5
+    duplicate_sku = client.post(
+        "/api/products",
+        headers=headers,
+        json={
+            "sku": "tee-001",
+            "name": "Duplicate Tee",
+            "cost_price": "1.00",
+            "selling_price": "2.00",
+        },
+    )
+    assert duplicate_sku.status_code == 409
+    invalid_price = client.post(
+        "/api/products",
+        headers=headers,
+        json={
+            "sku": "TEE-002",
+            "name": "Invalid Tee",
+            "cost_price": "1.005",
+            "selling_price": "2.00",
+        },
+    )
+    assert invalid_price.status_code == 400
+
+    with client.application.app_context():
+        movement = StockMovement.query.one()
+        assert movement.movement_type == "receipt"
+        assert movement.quantity_change == 5
+        assert movement.user_id == 1
+
+    listing = client.get("/api/products?search=tee&category_id=1&per_page=1")
+    assert listing.status_code == 200
+    assert listing.json["pagination"] == {
+        "page": 1,
+        "per_page": 1,
+        "total": 1,
+        "pages": 1,
+    }
+    assert listing.json["products"][0]["id"] == product["id"]
+
+    quantity_update = client.patch(
+        f"/api/products/{product['id']}",
+        headers=headers,
+        json={"quantity": 4},
+    )
+    assert quantity_update.status_code == 400
+
+    updated_category = client.patch(
+        f"/api/categories/{category_id}",
+        headers=headers,
+        json={"name": "Apparel"},
+    )
+    assert updated_category.status_code == 200
+    assert updated_category.json["category"]["product_count"] == 1
+    assert client.get(f"/api/products/{product['id']}").json["product"]["category"]["name"] == "Apparel"
+    archived = client.post(
+        f"/api/products/{product['id']}/archive",
+        headers=headers,
+    )
+    assert archived.status_code == 200
+    assert archived.json["product"]["is_active"] is False
+    assert client.delete(f"/api/products/{product['id']}").status_code == 405
+    with client.application.app_context():
+        assert StockMovement.query.filter_by(product_id=product["id"]).count() == 1
+
+
+def test_stock_movement_api_is_atomic_and_prevents_negative_stock(client):
+    headers = _api_auth_headers(client)
+    created = client.post(
+        "/api/products",
+        headers=headers,
+        json={
+            "sku": "STOCK-001",
+            "name": "Stock Test",
+            "cost_price": "1.00",
+            "selling_price": "2.00",
+            "quantity": 3,
+        },
+    )
+    product_id = created.json["product"]["id"]
+
+    insufficient = client.post(
+        "/api/stock-movements",
+        headers=headers,
+        json={
+            "product_id": product_id,
+            "movement_type": "stock_out",
+            "quantity": 4,
+            "reason": "Attempted oversell",
+        },
+    )
+    assert insufficient.status_code == 409
+
+    adjustment = client.post(
+        "/api/stock-movements",
+        headers=headers,
+        json={
+            "product_id": product_id,
+            "movement_type": "adjustment",
+            "quantity_change": -1,
+            "reason": "Count correction",
+        },
+    )
+    assert adjustment.status_code == 201
+    assert adjustment.json["stock_movement"]["quantity_change"] == -1
+
+    with client.application.app_context():
+        product = db.session.get(Product, product_id)
+        movements = StockMovement.query.filter_by(product_id=product_id).all()
+        assert product.quantity == 2
+        assert [movement.quantity_change for movement in movements] == [3, -1]
+
+    history = client.get(f"/api/stock-movements?product_id={product_id}")
+    assert history.status_code == 200
+    assert history.json["pagination"]["total"] == 2
+    assert history.json["stock_movements"][0]["actor"] == "Inventory Staff"
+
+    unauthenticated = client.post(
+        "/api/stock-movements",
+        json={
+            "product_id": product_id,
+            "movement_type": "stock_in",
+            "quantity": 1,
+            "reason": "Unattributed",
+        },
+    )
+    assert unauthenticated.status_code == 401

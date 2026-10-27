@@ -1,163 +1,106 @@
+import { Suspense } from "react"
 import Link from "next/link"
-import {
-  AlertTriangle,
-  Inbox,
-  Package,
-  Plus,
-  Truck,
-} from "lucide-react"
+import { cookies } from "next/headers"
+import { AlertTriangle, Package, Truck } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Panel } from "@/components/panel"
 import { KpiStrip, type Kpi } from "@/components/dashboard/kpi-strip"
-import {
-  LowStockPanel,
-  type LowStockItem,
-} from "@/components/dashboard/low-stock-panel"
-import {
-  ActivityPanel,
-  type Movement,
-} from "@/components/dashboard/activity-panel"
-import { cn } from "@/lib/utils"
-import { movementsFor } from "@/lib/activity"
-import { getInventorySnapshot, getLowStockPreview } from "@/lib/inventory"
-import { getStaffIncoming } from "@/lib/orders"
-import { getRequestPreview, getRequestSnapshot } from "@/lib/requests"
+import { LowStockPanel } from "@/components/dashboard/low-stock-panel"
+import { Panel } from "@/components/panel"
+import { Button } from "@/components/ui/button"
+import { getBackendUrl } from "@/lib/auth-proxy"
 
-// No prices and no order statuses: staff members only see what they need.
-const snap = getInventorySnapshot()
-const requestSnap = getRequestSnapshot()
-const lowStock: LowStockItem[] = getLowStockPreview()
-const myActivity: Movement[] = movementsFor("staff")
-const myRequests = getRequestPreview()
-const incoming = getStaffIncoming()
-const arrivingToday = incoming.filter((order) => order.due === "Today").length
+type Product = { sku: string; name: string; category: { name: string } | null; quantity: number; reorder_level: number }
+type Order = { purchase_number: string; supplier: string; expected_date: string | null; status: string }
+type Request = { request_number: string; product: string; quantity: number; status: string }
 
-const stats: Kpi[] = [
-  { title: "Products", value: String(snap.products), note: "In the catalogue", tone: "neutral", icon: Package, href: "/staff/inventory" },
-  { title: "Low stock", value: String(snap.belowMin), note: `${snap.critical} critical`, tone: snap.belowMin > 0 ? "bad" : "good", icon: AlertTriangle, href: "/staff/inventory", alert: snap.belowMin > 0 },
-  { title: "My open requests", value: String(requestSnap.open), note: `${requestSnap.approved} approved`, tone: "good", icon: Inbox, href: "/staff/requests" },
-  { title: "Arriving this week", value: String(incoming.length), note: arrivingToday === 1 ? "1 today" : `${arrivingToday} today`, tone: "neutral", icon: Truck, href: "/staff" },
-]
-
-type RequestStatus = "pending" | "approved" | "declined"
-
-const REQUEST_STYLES: Record<RequestStatus, string> = {
-  pending: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  approved: "bg-green-500/10 text-green-600 dark:text-green-400",
-  declined: "bg-muted text-muted-foreground",
+async function load(path: string, token: string) {
+  const response = await fetch(`${getBackendUrl()}/api/${path}`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+  if (!response.ok) throw new Error("Unable to load current inventory data")
+  return response.json()
 }
 
-export const instant = false
+async function StaffDashboardData() {
+  const token = (await cookies()).get("sb_inventory_session")?.value
+  let products: Product[] = []
+  let orders: Order[] = []
+  let requests: Request[] = []
+  let failed = false
+  if (token) {
+    try {
+      const [productResult, orderResult, requestResult] = await Promise.all([
+        load("products?is_active=true&per_page=100", token),
+        load("purchase-orders", token),
+        load("stock-requests", token),
+      ])
+      products = productResult.products
+      orders = orderResult.purchase_orders
+      requests = requestResult.stock_requests
+    } catch {
+      failed = true
+    }
+  } else {
+    failed = true
+  }
+  const lowProducts = products
+    .filter((product) => product.quantity <= product.reorder_level)
+    .map((product) => ({ sku: product.sku, name: product.name, category: product.category?.name ?? "Uncategorized", current: product.quantity, min: product.reorder_level }))
+  const incoming = orders.filter((order) => order.status === "ordered" || order.status === "partial")
+  const stats: Kpi[] = [
+    { title: "Products", value: failed ? "—" : String(products.length), note: "In the catalogue", tone: "neutral", icon: Package, href: "/staff/inventory" },
+    { title: "Low stock", value: failed ? "—" : String(lowProducts.length), note: "At or below reorder level", tone: lowProducts.length ? "bad" : "good", icon: AlertTriangle, href: "/staff/inventory", alert: lowProducts.length > 0 },
+    { title: "Incoming orders", value: failed ? "—" : String(incoming.length), note: "Current purchase orders", tone: "neutral", icon: Truck },
+  ]
 
-export default function StaffDashboardPage() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Overview</h2>
-          <p className="text-sm text-muted-foreground">
-            Your requests, low stock and deliveries on the way.
-          </p>
+          <p className="text-sm text-muted-foreground">Live inventory and supplier deliveries.</p>
         </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline" className="rounded-sm">
-            <Link href="/staff/inventory">
-              <Package /> Browse inventory
-            </Link>
-          </Button>
-          <Button asChild className="rounded-sm">
-            <Link href="/staff/requests">
-              <Plus /> New request
-            </Link>
-          </Button>
-        </div>
+        <Button asChild className="rounded-sm"><Link href="/staff/inventory"><Package /> Browse inventory</Link></Button>
       </div>
-
+      {failed && <p role="alert" className="text-sm text-destructive">Live dashboard data is unavailable. Check the backend connection.</p>}
       <KpiStrip items={stats} />
-
       <div className="grid gap-4 lg:grid-cols-3">
-        <Panel
-          title="My requests"
-          description="Items you have asked for"
-          href="/staff/requests"
-          linkLabel="All requests"
-          className="lg:col-span-2"
-        >
+        <LowStockPanel items={lowProducts} href="/staff/inventory" linkLabel={`View all ${lowProducts.length}`} className="lg:col-span-1" />
+        <Panel title="Incoming purchase orders" description="Current orders awaiting stock receipt" className="lg:col-span-2">
+          {incoming.length ? (
+            <ul className="divide-y">
+              {incoming.slice(0, 5).map((order) => (
+                <li key={order.purchase_number} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{order.supplier}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{order.purchase_number}</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{order.expected_date || "Expected date not set"}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="p-4 text-sm text-muted-foreground">{failed ? "Order data unavailable." : "No incoming orders."}</p>}
+        </Panel>
+      </div>
+      <Panel title="Stock requests" description="Request replenishment from the inventory team">
+        {requests.length ? (
           <ul className="divide-y">
-            {myRequests.map((r) => (
-              <li key={r.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-sm bg-muted">
-                  <Inbox className="size-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{r.item}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    <span className="font-mono">{r.id}</span> · {r.qty} · {r.when}
-                  </p>
-                </div>
-                <span
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs font-medium capitalize",
-                    REQUEST_STYLES[r.status]
-                  )}
-                >
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {r.status}
-                </span>
+            {requests.slice(0, 5).map((request) => (
+              <li key={request.request_number} className="flex items-center justify-between gap-3 px-4 py-3">
+                <span className="text-sm">{request.product} × {request.quantity}</span>
+                <span className="text-xs capitalize text-muted-foreground">{request.status}</span>
               </li>
             ))}
           </ul>
-        </Panel>
-
-        <LowStockPanel
-          items={lowStock}
-          href="/staff/inventory"
-          linkLabel={`View all ${snap.belowMin}`}
-        />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <ActivityPanel
-          title="My activity"
-          description="Your latest stock changes"
-          items={myActivity}
-          href="/staff/inventory"
-          linkLabel="Inventory"
-          className="lg:col-span-2"
-        />
-
-        <Panel
-          title="Incoming deliveries"
-          description="What is arriving soon"
-        >
-          <ul className="divide-y">
-            {incoming.map((o) => (
-              <li key={o.id} className="flex items-center gap-3 px-4 py-3">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-sm bg-muted text-xs font-semibold">
-                  {o.supplier.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{o.supplier}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {o.items}
-                  </p>
-                </div>
-                <span
-                  className={cn(
-                    "shrink-0 text-xs",
-                    o.due === "Today"
-                      ? "font-medium text-foreground"
-                      : "text-muted-foreground"
-                  )}
-                >
-                  {o.due}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      </div>
+        ) : <p className="p-4 text-sm text-muted-foreground">{failed ? "Request data unavailable." : "No stock requests yet."}</p>}
+        <div className="p-4 pt-0"><Button asChild variant="outline" size="sm"><Link href="/staff/requests">Manage requests</Link></Button></div>
+      </Panel>
     </div>
+  )
+}
+
+export default function StaffDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <StaffDashboardData />
+    </Suspense>
   )
 }

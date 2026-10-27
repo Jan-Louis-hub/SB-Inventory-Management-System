@@ -28,11 +28,7 @@ function dashboardHome(role: string) {
   return "/staff"
 }
 
-export function LoginForm({
-  className,
-  mockAuthEnabled = false,
-  ...props
-}: React.ComponentProps<"div"> & { mockAuthEnabled?: boolean }) {
+export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [showPassword, setShowPassword] = React.useState(false)
@@ -84,12 +80,6 @@ export function LoginForm({
                 <p className="text-balance text-muted-foreground">
                   Login to your SB Inventory account
                 </p>
-                {mockAuthEnabled && (
-                  <p className="text-sm text-muted-foreground">
-                    Development mock login is on. Use manager@demo.local,
-                    controller@demo.local, or staff@demo.local; any password works.
-                  </p>
-                )}
               </div>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
@@ -136,9 +126,8 @@ export function LoginForm({
                   {isSubmitting ? "Logging in..." : "Login"}
                 </Button>
               </Field>
-              {!mockAuthEnabled && (
-                <>
-                  <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
+              <>
+                <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
                     Or continue with
                   </FieldSeparator>
                   <Field className="gap-3">
@@ -190,8 +179,7 @@ export function LoginForm({
                       Continue with Apple
                     </Button>
                   </Field>
-                </>
-              )}
+              </>
               <FieldDescription className="text-center">
                 Don&apos;t have an account? <Link href="/register">Sign Up</Link>
               </FieldDescription>

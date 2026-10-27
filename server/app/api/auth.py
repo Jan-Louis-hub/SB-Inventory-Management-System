@@ -92,6 +92,31 @@ def create_access_token(user):
     )
 
 
+def authenticated_user_from_request():
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+
+    try:
+        claims = jwt.decode(
+            token,
+            current_app.config["SECRET_KEY"],
+            algorithms=["HS256"],
+            options={"require": ["exp", "iat", "sub", "type"]},
+        )
+        if claims["type"] != "access":
+            return None
+        user_id = int(claims["sub"])
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
+        return None
+
+    user = db.session.get(User, user_id)
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
 def _json_object(required_fields):
     payload = request.get_json()
     if not isinstance(payload, dict):
@@ -368,25 +393,7 @@ def login():
 
 @api.get("/auth/me")
 def current_user():
-    authorization = request.headers.get("Authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        return {"error": "Authentication required"}, 401
-
-    try:
-        claims = jwt.decode(
-            token,
-            current_app.config["SECRET_KEY"],
-            algorithms=["HS256"],
-            options={"require": ["exp", "iat", "sub", "type"]},
-        )
-        if claims["type"] != "access":
-            raise jwt.InvalidTokenError("Unexpected token type")
-        user_id = int(claims["sub"])
-    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
-        return {"error": "Authentication required"}, 401
-
-    user = db.session.get(User, user_id)
-    if user is None or not user.is_active:
+    user = authenticated_user_from_request()
+    if user is None:
         return {"error": "Authentication required"}, 401
     return {"user": serialize_user(user)}, 200

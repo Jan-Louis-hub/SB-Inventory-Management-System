@@ -11,6 +11,7 @@ class User(db.Model):
     email = db.Column(db.String(255), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(30), nullable=False, default="staff")
+    area = db.Column(db.String(80))
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = db.Column(
@@ -25,6 +26,39 @@ class User(db.Model):
             name="ck_users_role",
         ),
         Index("uq_users_email_lower", func.lower(email), unique=True),
+    )
+
+
+class BusinessSettings(db.Model):
+    __tablename__ = "business_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_business_settings_singleton"),
+        CheckConstraint(
+            "default_min >= 0 AND default_min <= 2147483647",
+            name="ck_business_settings_default_min_range",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    name = db.Column(db.String(160), nullable=False, default="")
+    address = db.Column(db.Text, nullable=False, default="")
+    phone = db.Column(db.String(40), nullable=False, default="")
+    email = db.Column(db.String(255), nullable=False, default="")
+    currency = db.Column(
+        db.String(80),
+        nullable=False,
+        default="South African Rand (ZAR)",
+        server_default=text("'South African Rand (ZAR)'"),
+    )
+    default_min = db.Column(db.Integer, nullable=False, default=0)
+    low_stock_alerts = db.Column(db.Boolean, nullable=False, default=True)
+    order_alerts = db.Column(db.Boolean, nullable=False, default=True)
+    weekly_summary = db.Column(db.Boolean, nullable=False, default=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
@@ -83,8 +117,10 @@ class Product(db.Model):
         CheckConstraint("reorder_level >= 0", name="ck_products_reorder_level_nonnegative"),
         Index("uq_products_sku_lower", text("lower(sku)"), unique=True),
         Index("ix_products_category_id", "category_id"),
+        Index("ix_products_supplier_id", "supplier_id"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_name", "name"),
+        Index("ix_products_location", "location"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -92,6 +128,9 @@ class Product(db.Model):
     name = db.Column(db.String(160), nullable=False)
     description = db.Column(db.Text)
     category_id = db.Column(db.Integer, db.ForeignKey("categories.id", ondelete="SET NULL"))
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id", ondelete="SET NULL"))
+    location = db.Column(db.String(80))
+    unit = db.Column(db.String(40), nullable=False, default="units", server_default=text("'units'"))
     cost_price = db.Column(Numeric(12, 2), nullable=False)
     selling_price = db.Column(Numeric(12, 2), nullable=False)
     quantity = db.Column(db.Integer, nullable=False, default=0)
@@ -106,6 +145,7 @@ class Product(db.Model):
     )
 
     category = db.relationship("Category")
+    supplier = db.relationship("Supplier")
 
 
 class Supplier(db.Model):
@@ -117,12 +157,18 @@ class Supplier(db.Model):
     email = db.Column(db.String(255))
     phone = db.Column(db.String(40))
     address = db.Column(db.Text)
+    city = db.Column(db.String(80))
+    lead_days = db.Column(db.Integer, nullable=False, default=0, server_default=text("0"))
+    categories = db.Column(db.String(255))
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = db.Column(
         db.DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    __table_args__ = (
+        CheckConstraint("lead_days >= 0", name="ck_suppliers_lead_days_nonnegative"),
     )
 
 
@@ -309,3 +355,108 @@ class PurchaseOrderItem(db.Model):
 
     purchase_order = db.relationship("PurchaseOrder")
     product = db.relationship("Product")
+
+
+class StockCount(db.Model):
+    __tablename__ = "stock_counts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('scheduled', 'in_progress', 'completed')",
+            name="ck_stock_counts_status",
+        ),
+        Index("ix_stock_counts_status", "status"),
+        Index("ix_stock_counts_owner_user_id", "owner_user_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    count_number = db.Column(db.String(40), nullable=False, unique=True)
+    area = db.Column(db.String(80), nullable=False)
+    location = db.Column(db.String(80), nullable=False)
+    due_label = db.Column(db.String(40), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="scheduled")
+    owner_user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_by_user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at = db.Column(db.DateTime(timezone=True))
+
+    owner = db.relationship("User", foreign_keys=[owner_user_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    lines = db.relationship(
+        "StockCountLine",
+        back_populates="stock_count",
+        cascade="all, delete-orphan",
+        order_by="StockCountLine.id",
+    )
+
+
+class StockCountLine(db.Model):
+    __tablename__ = "stock_count_lines"
+    __table_args__ = (
+        CheckConstraint(
+            "expected_quantity >= 0",
+            name="ck_stock_count_lines_expected_nonnegative",
+        ),
+        CheckConstraint(
+            "counted_quantity IS NULL OR counted_quantity >= 0",
+            name="ck_stock_count_lines_counted_nonnegative",
+        ),
+        db.UniqueConstraint(
+            "stock_count_id", "product_id", name="uq_stock_count_lines_count_product"
+        ),
+        Index("ix_stock_count_lines_stock_count_id", "stock_count_id"),
+        Index("ix_stock_count_lines_product_id", "product_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    stock_count_id = db.Column(
+        db.Integer,
+        db.ForeignKey("stock_counts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = db.Column(
+        db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    expected_quantity = db.Column(db.Integer, nullable=False)
+    counted_quantity = db.Column(db.Integer)
+
+    stock_count = db.relationship("StockCount", back_populates="lines")
+    product = db.relationship("Product")
+
+
+class StockRequest(db.Model):
+    __tablename__ = "stock_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'declined', 'fulfilled')",
+            name="ck_stock_requests_status",
+        ),
+        CheckConstraint("quantity > 0", name="ck_stock_requests_quantity_positive"),
+        Index("ix_stock_requests_status", "status"),
+        Index("ix_stock_requests_requester_user_id", "requester_user_id"),
+        Index("ix_stock_requests_product_id", "product_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_number = db.Column(db.String(40), nullable=False, unique=True)
+    product_id = db.Column(
+        db.Integer, db.ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity = db.Column(db.Integer, nullable=False)
+    note = db.Column(db.String(255), nullable=False, default="", server_default=text("''"))
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    requester_user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at = db.Column(db.DateTime(timezone=True))
+
+    product = db.relationship("Product")
+    requester = db.relationship("User")

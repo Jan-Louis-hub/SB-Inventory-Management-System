@@ -18,6 +18,8 @@ from app.models import (
 )
 
 MONEY_QUANTUM = Decimal("0.01")
+MAX_MONEY = Decimal("9999999999.99")
+MAX_INTEGER = 2_147_483_647
 
 
 @contextmanager
@@ -44,8 +46,10 @@ def _money(value, field):
         amount = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError) as error:
         raise InventoryOperationError(f"{field} must be a valid amount") from error
-    if not amount.is_finite() or amount < 0:
-        raise InventoryOperationError(f"{field} must be non-negative")
+    if not amount.is_finite() or amount < 0 or amount > MAX_MONEY:
+        raise InventoryOperationError(
+            f"{field} must be between 0 and {MAX_MONEY}"
+        )
     try:
         return amount.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
     except InvalidOperation as error:
@@ -140,11 +144,16 @@ def create_sale(
             subtotal += product.selling_price * quantity
 
         subtotal = subtotal.quantize(MONEY_QUANTUM)
+        if subtotal > MAX_MONEY:
+            raise InventoryOperationError("sale subtotal exceeds the supported range")
         if discount > subtotal:
             raise InventoryOperationError("discount_amount cannot exceed subtotal")
         tax_amount = ((subtotal - discount) * rate).quantize(
             MONEY_QUANTUM, rounding=ROUND_HALF_UP
         )
+        total_amount = subtotal - discount + tax_amount
+        if tax_amount > MAX_MONEY or total_amount > MAX_MONEY:
+            raise InventoryOperationError("sale total exceeds the supported range")
         sale = Sale(
             sale_number=sale_number.strip(),
             user_id=user_id,
@@ -152,7 +161,7 @@ def create_sale(
             subtotal=subtotal,
             discount_amount=discount,
             tax_amount=tax_amount,
-            total_amount=subtotal - discount + tax_amount,
+            total_amount=total_amount,
             idempotency_key=idempotency_key,
         )
         db.session.add(sale)
@@ -229,6 +238,8 @@ def receive_purchase_order_item(*, item_id, quantity, user_id):
         )
         if product is None:
             raise InventoryOperationError("purchase order product was not found")
+        if product.quantity + quantity > MAX_INTEGER:
+            raise InventoryOperationError("received stock exceeds the supported quantity range")
 
         item.quantity_received += quantity
         product.quantity += quantity

@@ -1,357 +1,159 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
-import { Check, Clock, Inbox, PackageCheck, Plus } from "lucide-react"
+import { Inbox } from "lucide-react"
 
 import { DataTable, EmptyState, type Column } from "@/components/data/data-table"
-import { FilterChips } from "@/components/data/filter-chips"
 import { PageHeader } from "@/components/data/page-header"
-import { TablePagination, usePagination } from "@/components/data/pagination"
-import { StatusBadge, type Tone } from "@/components/data/status-badge"
-import { KpiStrip, type Kpi } from "@/components/dashboard/kpi-strip"
+import { StatusBadge } from "@/components/data/status-badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { listInventory } from "@/lib/inventory-api"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
-import { Textarea } from "@/components/ui/textarea"
-import { useSearchQuery } from "@/hooks/use-search-query"
-import { getProductsForRole } from "@/lib/inventory"
-import {
-  getRequests,
-  type RequestStatus,
+  createStockRequest,
+  listStockRequests,
+  resolveStockRequest,
   type StockRequest,
-} from "@/lib/requests"
+  withdrawStockRequest,
+} from "@/lib/stock-operations"
+import type { Product } from "@/lib/inventory"
 
-const selectClass =
-  "h-8 w-full rounded-sm border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-
-const TONE: Record<RequestStatus, Tone> = {
-  pending: "warning",
-  approved: "info",
-  declined: "neutral",
-  fulfilled: "success",
-}
-
-const RANK: Record<RequestStatus, number> = {
-  pending: 0,
-  approved: 1,
-  declined: 2,
-  fulfilled: 3,
-}
-
-const FILTERS: RequestStatus[] = ["pending", "approved", "declined", "fulfilled"]
-
-function label(status: RequestStatus) {
-  return status.charAt(0).toUpperCase() + status.slice(1)
-}
-
-export function RequestsView() {
-  const q = useSearchQuery()
-  const preset = useSearchParams().get("item") ?? ""
-  const products = React.useMemo(
-    () =>
-      getProductsForRole("staff_member").sort((a, b) =>
-        a.name.localeCompare(b.name)
-      ),
-    []
-  )
-  const bySku = React.useMemo(
-    () => new Map(products.map((product) => [product.sku, product])),
-    [products]
-  )
-  const presetKnown = bySku.has(preset)
-
-  const [requests, setRequests] = React.useState<StockRequest[]>(() =>
-    getRequests()
-  )
-  const [filter, setFilter] = React.useState<"all" | RequestStatus>("all")
-  const [open, setOpen] = React.useState(presetKnown)
-  const [sku, setSku] = React.useState(
-    presetKnown ? preset : (products[0]?.sku ?? "")
-  )
-  const [qty, setQty] = React.useState("1")
-  const [note, setNote] = React.useState("")
+export function RequestsView({ manager = false }: { manager?: boolean }) {
+  const [requests, setRequests] = React.useState<StockRequest[]>([])
+  const [products, setProducts] = React.useState<Product[]>([])
+  const [form, setForm] = React.useState({ product_id: "", quantity: "1", note: "" })
+  const [loading, setLoading] = React.useState(true)
+  const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState("")
 
-  const openCount = requests.filter(
-    (request) => request.status === "pending" || request.status === "approved"
-  ).length
-  const pendingCount = requests.filter(
-    (request) => request.status === "pending"
-  ).length
-  const approvedCount = requests.filter(
-    (request) => request.status === "approved"
-  ).length
+  const reload = React.useCallback(async () => {
+    try {
+      const requestRows = await listStockRequests()
+      setRequests(requestRows)
+      if (!manager) {
+        const inventory = await listInventory()
+        setProducts(inventory.products)
+      }
+      setError("")
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load stock requests")
+    } finally {
+      setLoading(false)
+    }
+  }, [manager])
 
-  const stats: Kpi[] = [
-    {
-      title: "Open",
-      value: String(openCount),
-      note: "Pending or approved",
-      tone: "neutral",
-      icon: Inbox,
-    },
-    {
-      title: "Pending",
-      value: String(pendingCount),
-      note: "Waiting on a decision",
-      tone: pendingCount > 0 ? "neutral" : "good",
-      icon: Clock,
-    },
-    {
-      title: "Approved",
-      value: String(approvedCount),
-      note: "Being ordered",
-      tone: "good",
-      icon: Check,
-    },
-    {
-      title: "Fulfilled",
-      value: String(
-        requests.filter((request) => request.status === "fulfilled").length
-      ),
-      note: "Already received",
-      tone: "neutral",
-      icon: PackageCheck,
-    },
-  ]
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => void reload(), 0)
+    return () => window.clearTimeout(timer)
+  }, [reload])
 
-  const rows = requests
-    .filter((request) => filter === "all" || request.status === filter)
-    .filter((request) => {
-      if (!q) return true
-      const product = bySku.get(request.sku)
-      return [request.id, request.sku, request.note, request.when, product?.name ?? ""]
-        .some((value) => value.toLowerCase().includes(q))
-    })
-    .sort((a, b) => {
-      const byStatus = RANK[a.status] - RANK[b.status]
-      if (byStatus !== 0) return byStatus
-      if (a.id === b.id) return 0
-      return a.id < b.id ? 1 : -1
-    })
-
-  const pagination = usePagination(rows, { resetKey: `${q}|${filter}` })
-
-  function withdraw(id: string) {
-    setRequests((current) => current.filter((request) => request.id !== id))
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setError("")
+    try {
+      await createStockRequest({
+        product_id: Number(form.product_id),
+        quantity: Number(form.quantity),
+        note: form.note.trim(),
+      })
+      setForm({ product_id: "", quantity: "1", note: "" })
+      await reload()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create stock request")
+    } finally {
+      setSaving(false)
+    }
   }
 
-  function submit(event: React.FormEvent) {
-    event.preventDefault()
-    const product = bySku.get(sku)
-    const amount = Number.parseInt(qty, 10)
-    if (!product) {
-      setError("Choose a style from the catalogue.")
-      return
-    }
-    if (!Number.isInteger(amount) || amount < 1) {
-      setError("Quantity has to be at least 1.")
-      return
-    }
-
-    const nextNumber =
-      requests.reduce((max, request) => {
-        const value = Number(request.id.replace("REQ-", ""))
-        return Number.isFinite(value) ? Math.max(max, value) : max
-      }, 0) + 1
-
-    const next: StockRequest = {
-      id: `REQ-${nextNumber}`,
-      sku: product.sku,
-      qty: amount,
-      note: note.trim(),
-      when: "Today",
-      status: "pending",
-      requester: "Amahle Dlamini",
-    }
-    setRequests((current) => [next, ...current])
-    setQty("1")
-    setNote("")
+  async function act(request: StockRequest, action: "approve" | "decline" | "fulfill") {
+    setSaving(true)
     setError("")
-    setFilter("pending")
-    setOpen(false)
+    try {
+      await resolveStockRequest(request.id, action)
+      await reload()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update stock request")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function withdraw(request: StockRequest) {
+    setSaving(true)
+    setError("")
+    try {
+      await withdrawStockRequest(request.id)
+      await reload()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not withdraw stock request")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const columns: Column<StockRequest>[] = [
-    {
-      key: "request",
-      header: "Request",
-      cell: (request) => (
-        <div className="flex flex-col">
-          <span className="font-mono text-xs text-muted-foreground">
-            {request.id}
-          </span>
-          <span className="text-xs text-muted-foreground">{request.when}</span>
-        </div>
-      ),
-    },
-    {
-      key: "item",
-      header: "Item",
-      cell: (request) => {
-        const product = bySku.get(request.sku)
-        return (
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-medium">
-              {product?.name ?? request.sku}
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              <span className="font-mono">{request.sku}</span>
-              {request.note ? ` · ${request.note}` : ""}
-            </span>
-          </div>
-        )
-      },
-    },
-    {
-      key: "qty",
-      header: "Qty",
-      cell: (request) => (
-        <span className="text-sm tabular-nums">
-          {request.qty} {bySku.get(request.sku)?.unit ?? "units"}
-        </span>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (request) => (
-        <StatusBadge tone={TONE[request.status]}>
-          {label(request.status)}
-        </StatusBadge>
-      ),
-    },
+    { key: "number", header: "Request", cell: (item) => <span className="font-mono text-xs">{item.request_number}</span> },
+    { key: "product", header: "Product", cell: (item) => <span className="text-sm">{item.product} <span className="font-mono text-xs text-muted-foreground">({item.sku})</span></span> },
+    { key: "quantity", header: "Quantity", cell: (item) => <span className="text-sm tabular-nums">{item.quantity}</span> },
+    ...(manager ? [{ key: "requester", header: "Requested by", cell: (item: StockRequest) => <span className="text-sm">{item.requester}</span> } satisfies Column<StockRequest>] : []),
+    { key: "note", header: "Note", cell: (item) => <span className="text-sm">{item.note || "—"}</span> },
+    { key: "status", header: "Status", cell: (item) => <StatusBadge tone={item.status === "fulfilled" ? "success" : item.status === "pending" ? "warning" : item.status === "approved" ? "info" : "neutral"}>{item.status}</StatusBadge> },
     {
       key: "actions",
       header: "Actions",
       align: "right",
-      cell: (request) =>
-        request.status === "pending" ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 rounded-sm px-3 text-red-600 hover:text-red-600 dark:text-red-400"
-            onClick={() => withdraw(request.id)}
-          >
-            Withdraw
-          </Button>
-        ) : null,
+      cell: (item) => (
+        <div className="flex justify-end gap-2">
+          {manager && item.status === "pending" && (
+            <>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => void act(item, "approve")}>Approve</Button>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => void act(item, "decline")}>Decline</Button>
+            </>
+          )}
+          {manager && item.status === "approved" && (
+            <Button size="sm" disabled={saving} onClick={() => void act(item, "fulfill")}>Receive stock</Button>
+          )}
+          {!manager && item.status === "pending" && (
+            <Button size="sm" variant="outline" disabled={saving} onClick={() => void withdraw(item)}>Withdraw</Button>
+          )}
+        </div>
+      ),
     },
   ]
 
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="Requests"
-        description="Ask for stock to be reordered, and track what you have already asked for."
-        actions={
-          <Button className="rounded-sm" onClick={() => setOpen(true)}>
-            <Plus /> New request
-          </Button>
-        }
+        title="Stock requests"
+        description={manager ? "Review replenishment requests and record received quantities." : "Request replenishment from the inventory team."}
       />
-
-      <KpiStrip items={stats} />
-
-      <FilterChips
-        value={filter}
-        onChange={setFilter}
-        options={[
-          { value: "all", label: "All", count: requests.length },
-          ...FILTERS.map((status) => ({
-            value: status,
-            label: label(status),
-            count: requests.filter((request) => request.status === status).length,
-          })),
-        ]}
-      />
-
+      {!manager && (
+        <form onSubmit={submit} className="grid gap-3 rounded-sm border bg-card p-4 sm:grid-cols-3">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Product
+            <select required value={form.product_id} onChange={(event) => setForm({ ...form, product_id: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground">
+              <option value="">Select product</option>
+              {products.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name} ({product.stock} in stock)</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Quantity
+            <input required type="number" min="1" step="1" value={form.quantity} onChange={(event) => setForm({ ...form, quantity: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground" />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Note
+            <input maxLength={255} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground" />
+          </label>
+          <Button type="submit" disabled={saving || !products.length} className="sm:col-span-3 sm:justify-self-start">{saving ? "Saving…" : "Submit request"}</Button>
+        </form>
+      )}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <DataTable
         columns={columns}
-        rows={pagination.pageItems}
-        rowKey={(request) => request.id}
-        empty={
-          <EmptyState
-            icon={Inbox}
-            title="No requests found"
-            description="Try another status or search, or ask for a style."
-          />
-        }
-        footer={
-          <TablePagination
-            pagination={pagination}
-            noun="requests"
-            note={q ? `Search: “${q}”` : undefined}
-          />
-        }
+        rows={loading ? [] : requests}
+        rowKey={(item) => String(item.id)}
+        empty={<EmptyState icon={Inbox} title={loading ? "Loading requests…" : error ? "Requests unavailable" : "No stock requests"} description={loading ? "Loading saved requests." : error ? "Check backend availability and your access." : manager ? "Staff replenishment requests will appear here." : "Submit a request above when you need more stock."} />}
       />
-
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent>
-          <form onSubmit={submit} className="flex flex-1 flex-col">
-            <SheetHeader>
-              <SheetTitle>New request</SheetTitle>
-              <SheetDescription>
-                {presetKnown
-                  ? "Prefilled from the style you were looking at."
-                  : "Tell the buyer what the floor is running short of."}
-              </SheetDescription>
-            </SheetHeader>
-            <div className="flex flex-col gap-4 px-4">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="request-sku">Style</Label>
-                <select
-                  id="request-sku"
-                  className={selectClass}
-                  value={sku}
-                  onChange={(event) => setSku(event.target.value)}
-                >
-                  {products.map((product) => (
-                    <option key={product.sku} value={product.sku}>
-                      {product.name} · {product.sku}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="request-qty">Quantity</Label>
-                <Input
-                  id="request-qty"
-                  type="number"
-                  min={1}
-                  value={qty}
-                  onChange={(event) => setQty(event.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="request-note">Note</Label>
-                <Textarea
-                  id="request-note"
-                  value={note}
-                  placeholder="Size run, display, or who asked."
-                  className="rounded-sm"
-                  onChange={(event) => setNote(event.target.value)}
-                />
-              </div>
-              {error && <p className="text-xs text-destructive">{error}</p>}
-            </div>
-            <SheetFooter>
-              <Button type="submit" className="rounded-sm">
-                Submit request
-              </Button>
-            </SheetFooter>
-          </form>
-        </SheetContent>
-      </Sheet>
     </div>
   )
 }

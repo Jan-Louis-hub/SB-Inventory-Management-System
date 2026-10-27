@@ -17,20 +17,32 @@ export function AdjustStock({
   onAdjust,
 }: {
   product: Product
-  onAdjust: (delta: number) => void
+  onAdjust: (delta: number, reason: string) => Promise<void>
 }) {
   const [open, setOpen] = React.useState(false)
   const [qty, setQty] = React.useState("")
+  const [reason, setReason] = React.useState("")
+  const [error, setError] = React.useState("")
+  const [saving, setSaving] = React.useState(false)
 
   const n = Number.parseInt(qty, 10)
-  const valid = Number.isInteger(n) && n > 0
-  const tooMany = valid && n > product.stock
+  const valid = Number.isInteger(n) && n > 0 && reason.trim().length > 0
+  const tooMany = Number.isInteger(n) && n > product.stock
 
-  function apply(sign: 1 | -1) {
+  async function apply(sign: 1 | -1) {
     if (!valid) return
-    onAdjust(sign * n)
-    setQty("")
-    setOpen(false)
+    setSaving(true)
+    setError("")
+    try {
+      await onAdjust(sign * n, reason.trim())
+      setQty("")
+      setReason("")
+      setOpen(false)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not record stock movement")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -61,6 +73,14 @@ export function AdjustStock({
           placeholder="Quantity"
           aria-label="Quantity"
         />
+        <Input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Reason"
+          aria-label="Reason"
+          maxLength={255}
+        />
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
 
         {tooMany && (
           <p className="text-xs text-destructive">
@@ -72,7 +92,7 @@ export function AdjustStock({
           <Button 
             size="sm"
             className="flex-1 rounded-sm"
-            disabled={!valid}
+            disabled={!valid || saving}
             onClick={() => apply(1)}
           >
             Stock in
@@ -81,7 +101,7 @@ export function AdjustStock({
             size="sm"
             variant="outline"
             className="flex-1 rounded-sm"
-            disabled={!valid || tooMany}
+            disabled={!valid || tooMany || saving}
             onClick={() => apply(-1)}
           >
             Stock out

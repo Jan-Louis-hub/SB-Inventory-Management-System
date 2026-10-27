@@ -8,10 +8,15 @@ from werkzeug.exceptions import HTTPException
 
 import app.models
 from app.api import api
+from app.api import purchase_orders as purchase_orders_api
+from app.api import sales as sales_api
+from app.api import settings as settings_api
+from app.api import suppliers as suppliers_api
+from app.api import users as users_api
 from app.config import CONFIGS
+from app.commands import register_commands
 from app.extensions import db, migrate
 from app.logging_config import configure_logging
-from app.seed import seed_demo_accounts, seed_demo_data
 
 
 def create_app(config=None):
@@ -153,7 +158,7 @@ def create_app(config=None):
     )
     app.register_blueprint(api, url_prefix="/api")
     register_error_handlers(app)
-    register_database_commands(app)
+    register_commands(app)
     return app
 
 
@@ -161,28 +166,6 @@ def enable_sqlite_foreign_keys(connection, _record):
     cursor = connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
-
-
-def register_database_commands(app):
-    @app.cli.command("seed-demo-accounts")
-    def seed_demo_accounts_command():
-        """Create local demo manager and stock-controller accounts."""
-        if app.config["APP_ENV"] == "production":
-            raise RuntimeError("Demo accounts cannot be created in production")
-        if seed_demo_accounts():
-            app.logger.info("Demo manager and stock-controller accounts created")
-        else:
-            app.logger.info("Demo accounts already exist; no changes made")
-
-    @app.cli.command("seed-demo")
-    def seed_demo():
-        """Add sample clothing-store inventory and transactions."""
-        if app.config["APP_ENV"] == "production":
-            raise RuntimeError("Demo data cannot be seeded in production")
-        if seed_demo_data():
-            app.logger.info("Demo data added")
-        else:
-            app.logger.info("Demo data already exists; no changes made")
 
 
 def register_error_handlers(app):

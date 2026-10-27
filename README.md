@@ -117,33 +117,14 @@ cp client/.env.example client/.env.local
 The example config points the frontend at the local backend on port 8000; leave
 it as-is for local development unless you have changed the backend address.
 
-From the `server` directory, apply the database migrations to create the
-application tables:
 
-**Windows PowerShell**
 
-```powershell
-cd server
-.\venv\Scripts\python.exe -m flask --app main db upgrade
-```
-
-**macOS or Linux**
-
-```bash
-cd server
-./venv/bin/python -m flask --app main db upgrade
-```
-
-Return to the repository root before starting the project with `npm run dev`.
-If PostgreSQL reports a connection error, confirm the database exists, the
-server is running, and the URL in `server/.env` has the correct credentials.
-Do not run migrations against a database containing unrelated or important
-data.
 
 ## 5. Run the frontend and backend
 
 With the environment active, start both services from the repository root:
 
+Open: a new Cmd Terminal
 ```bash
 npm run dev
 ```
@@ -185,10 +166,9 @@ directory.
 - **Python or npm command is not found:** Install the prerequisite and reopen
   the terminal so its PATH is refreshed. On Windows PowerShell, try `npm.cmd`
   if `npm` is blocked by the script execution policy.
-- **Login accounts:** Follow `server/RUN_BACKEND.md` for the development
-  account setup instructions.
+- **Login accounts:** Follow the first-manager setup instructions above.
 
 For more detail, see
-[`server/DATABASE_SETUP_AND_TESTING.md`](server/DATABASE_SETUP_AND_TESTING.md)
+[`backlog/DATABASE_SETUP_AND_TESTING.md`](backlog/DATABASE_SETUP_AND_TESTING.md)
 for database setup and tests, and [`server/API_CONVENTIONS.md`](server/API_CONVENTIONS.md)
 for API conventions.
