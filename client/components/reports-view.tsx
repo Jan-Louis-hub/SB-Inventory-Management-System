@@ -14,7 +14,7 @@ import { StockFlowChart } from "@/components/stock-flow-chart"
 import { Button } from "@/components/ui/button"
 import { useSearchQuery } from "@/hooks/use-search-query"
 import { listInventory, listStockMovements, type StockMovementRecord } from "@/lib/inventory-api"
-import { listSales, recordSale, type SaleRecord } from "@/lib/sales-api"
+import { listSales, type SaleRecord } from "@/lib/sales-api"
 import { getLevel } from "@/lib/inventory"
 import { money } from "@/lib/format"
 
@@ -30,8 +30,6 @@ export function ReportsView() {
   const [products, setProducts] = React.useState<ProductRow[]>([])
   const [movements, setMovements] = React.useState<StockMovementRecord[]>([])
   const [sales, setSales] = React.useState<SaleRecord[]>([])
-  const [saleForm, setSaleForm] = React.useState({ product_id: "", quantity: "1" })
-  const [savingSale, setSavingSale] = React.useState(false)
   const [move, setMove] = React.useState<MoveFilter>("all")
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
@@ -82,30 +80,6 @@ export function ReportsView() {
   })
   const pagination = usePagination(ledger, { resetKey: `${q}|${move}` })
 
-  async function submitSale(event: React.FormEvent) {
-    event.preventDefault()
-    setSavingSale(true)
-    setError("")
-    try {
-      await recordSale({
-        items: [{ product_id: Number(saleForm.product_id), quantity: Number(saleForm.quantity) }],
-      })
-      setSaleForm({ product_id: "", quantity: "1" })
-      const [inventory, stockMovements, salesRows] = await Promise.all([
-        listInventory(),
-        listStockMovements(),
-        listSales(),
-      ])
-      setProducts(inventory.products)
-      setMovements(stockMovements)
-      setSales(salesRows)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not record sale")
-    } finally {
-      setSavingSale(false)
-    }
-  }
-
   function exportCsv() {
     const header = ["SKU", "Product", "Category", "Stock", "Reorder level", "Unit cost", "Stock value"]
     const body = products.map((product) => [
@@ -152,38 +126,21 @@ export function ReportsView() {
       />
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <KpiStrip items={stats} />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <form onSubmit={submitSale} className="flex flex-col gap-3 rounded-sm border bg-card p-4">
-          <h3 className="text-sm font-semibold">Record a sale</h3>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            Product
-            <select required value={saleForm.product_id} onChange={(event) => setSaleForm({ ...saleForm, product_id: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground">
-              <option value="">Select product</option>
-              {products.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name} ({product.stock} in stock)</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            Quantity
-            <input required min="1" type="number" value={saleForm.quantity} onChange={(event) => setSaleForm({ ...saleForm, quantity: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground" />
-          </label>
-          <Button type="submit" disabled={savingSale || !products.length} className="self-start rounded-sm">{savingSale ? "Recording…" : "Record sale"}</Button>
-        </form>
-        <Panel title="Recent sales" description="Completed transactions saved to the database">
-          {sales.length ? (
-            <ul className="divide-y">
-              {sales.slice(0, 5).map((sale) => (
-                <li key={sale.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-xs font-medium">{sale.sale_number}</p>
-                    <p className="truncate text-xs text-muted-foreground">{sale.items.map((item) => `${item.product_name} × ${item.quantity}`).join(", ")}</p>
-                  </div>
-                  <span className="text-sm font-medium tabular-nums">{money.format(Number(sale.total_amount))}</span>
-                </li>
-              ))}
-            </ul>
-          ) : <p className="p-4 text-sm text-muted-foreground">{loading ? "Loading sales…" : "No sales recorded yet."}</p>}
-        </Panel>
-      </div>
+      <Panel title="Recent sales" description="Completed transactions saved to the database">
+        {sales.length ? (
+          <ul className="divide-y">
+            {sales.slice(0, 5).map((sale) => (
+              <li key={sale.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-xs font-medium">{sale.sale_number}</p>
+                  <p className="truncate text-xs text-muted-foreground">{sale.items.map((item) => `${item.product_name} × ${item.quantity}`).join(", ")}</p>
+                </div>
+                <span className="text-sm font-medium tabular-nums">{money.format(Number(sale.total_amount))}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="p-4 text-sm text-muted-foreground">{loading ? "Loading sales…" : "No sales recorded yet."}</p>}
+      </Panel>
       <div className="grid gap-4 lg:grid-cols-3">
         <StockFlowChart className="lg:col-span-2" />
         <Panel title="Value by category" description="At current unit cost, highest first">

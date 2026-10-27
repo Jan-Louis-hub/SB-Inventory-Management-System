@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import Image from "next/image"
 import { Eye, EyeOff } from "lucide-react"
 import { cn } from "cn"
 
@@ -192,9 +193,11 @@ export function RegisterForm({
             </FieldGroup>
           </form>
           <div className="relative hidden bg-muted md:block">
-            <img
+            <Image
               src="/background.jpg"
-              alt="Image"
+              alt=""
+              fill
+              sizes="(min-width: 768px) 50vw, 100vw"
               className="absolute inset-0 h-full w-full object-cover "
             />
             <FieldDescription className="absolute inset-x-0 bottom-0 px-14 pb-8 text-left text-xs">
