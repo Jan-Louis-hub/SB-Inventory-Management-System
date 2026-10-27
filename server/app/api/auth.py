@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api import api
+from app.api.helpers import serialize_auth_user as serialize_user
 from app.extensions import db
 from app.models import OAuthIdentity, OAuthLoginCode, User
 
@@ -61,21 +62,6 @@ def _oauth_client_secret(provider, client_id):
             headers={"kid": key_id},
         )
     return current_app.config.get(settings["client_secret"])
-
-
-def serialize_user(user):
-    if user.role in {"admin", "manager"}:
-        frontend_role = "inventory_manager"
-    elif user.role == "stock_controller":
-        frontend_role = "stock_controller"
-    else:
-        frontend_role = "staff_member"
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "role": frontend_role,
-    }
 
 
 def create_access_token(user):

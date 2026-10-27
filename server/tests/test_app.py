@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -517,6 +518,10 @@ def test_migrations_create_all_inventory_tables(client):
             "purchase_order_items",
             "oauth_identities",
             "oauth_login_codes",
+            "shop_settings",
+            "stock_counts",
+            "stock_count_lines",
+            "stock_requests",
         }
         index_names = set(
             db.session.execute(
@@ -880,3 +885,286 @@ def test_receive_purchase_order_item_rejects_zero_quantity(client):
     with client.application.app_context():
         with pytest.raises(InventoryOperationError, match="positive integer"):
             receive_purchase_order_item(item_id=1, quantity=0, user_id=1)
+
+
+def _register(client, *, name="Shop Staff", email="staff@example.test", password="correct-horse-battery"):
+    response = client.post(
+        "/api/auth/register",
+        json={"name": name, "email": email, "password": password},
+    )
+    assert response.status_code == 201
+    return response.json["token"], response.json["user"]
+
+
+def _auth_header(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_inventory_routes_require_authentication(client):
+    assert client.get("/api/products").status_code == 401
+    assert client.get("/api/suppliers").status_code == 401
+    assert client.get("/api/categories").status_code == 401
+
+
+def test_staff_can_list_products_without_cost(client):
+    token, _ = _register(client)
+    with client.application.app_context():
+        category = Category(name="Tops")
+        db.session.add(category)
+        db.session.flush()
+        db.session.add(
+            Product(
+                sku="TEE-001",
+                name="Black Tee",
+                category_id=category.id,
+                cost_price=Decimal("10.00"),
+                selling_price=Decimal("25.00"),
+                quantity=12,
+                reorder_level=4,
+                location="Women's floor",
+                unit="units",
+            )
+        )
+        db.session.commit()
+
+    response = client.get("/api/products", headers=_auth_header(token))
+    assert response.status_code == 200
+    assert response.json["pagination"]["total"] == 1
+    item = response.json["items"][0]
+    assert item["sku"] == "TEE-001"
+    assert "cost_price" not in item
+    assert item["selling_price"] == 25.0
+
+
+def test_manager_can_create_supplier_and_product(client):
+    token, user = _register(client, email="manager-create@example.test")
+    with client.application.app_context():
+        member = db.session.get(User, user["id"])
+        member.role = "manager"
+        db.session.commit()
+
+    supplier = client.post(
+        "/api/suppliers",
+        headers=_auth_header(token),
+        json={
+            "name": "Cape Cloth Co.",
+            "contact_person": "Nomsa",
+            "email": "orders@capecloth.test",
+            "phone": "+27 21 000 0000",
+            "address": "Cape Town",
+            "city": "Cape Town",
+            "lead_days": 7,
+            "categories": "Tops",
+        },
+    )
+    assert supplier.status_code == 201
+
+    category = client.post(
+        "/api/categories",
+        headers=_auth_header(token),
+        json={"name": "Tops", "description": "Shirts"},
+    )
+    assert category.status_code == 201
+
+    product = client.post(
+        "/api/products",
+        headers=_auth_header(token),
+        json={
+            "sku": "TOP-100",
+            "name": "Linen Shirt",
+            "description": None,
+            "category_id": category.json["id"],
+            "supplier_id": supplier.json["id"],
+            "location": "Men's floor",
+            "unit": "units",
+            "cost_price": 120.5,
+            "selling_price": 249.99,
+            "quantity": 8,
+            "reorder_level": 3,
+            "is_active": True,
+        },
+    )
+    assert product.status_code == 201
+    assert product.json["cost_price"] == 120.5
+    assert product.json["supplier"] == "Cape Cloth Co."
+
+
+def test_stock_controller_can_adjust_stock(client):
+    token, user = _register(client, email="controller@example.test")
+    with client.application.app_context():
+        member = db.session.get(User, user["id"])
+        member.role = "stock_controller"
+        db.session.add(
+            Product(
+                sku="ADJ-001",
+                name="Adjustable",
+                cost_price=Decimal("5.00"),
+                selling_price=Decimal("10.00"),
+                quantity=5,
+                reorder_level=1,
+            )
+        )
+        db.session.commit()
+        product_id = Product.query.filter_by(sku="ADJ-001").one().id
+
+    response = client.post(
+        f"/api/products/{product_id}/adjustments",
+        headers=_auth_header(token),
+        json={"quantity_change": -2, "reason": "Damaged on floor"},
+    )
+    assert response.status_code == 200
+    assert response.json["product"]["quantity"] == 3
+    assert response.json["movement"]["movement_type"] == "adjustment"
+
+
+def test_staff_cannot_manage_users(client):
+    token, _ = _register(client, email="staff-users@example.test")
+    response = client.get("/api/users", headers=_auth_header(token))
+    assert response.status_code == 403
+
+
+def test_shop_settings_round_trip(client):
+    token, user = _register(client, email="manager-shop@example.test")
+    with client.application.app_context():
+        member = db.session.get(User, user["id"])
+        member.role = "manager"
+        db.session.commit()
+
+    current = client.get("/api/shop-settings", headers=_auth_header(token))
+    assert current.status_code == 200
+    assert current.json["name"] == ""
+
+    updated = client.patch(
+        "/api/shop-settings",
+        headers=_auth_header(token),
+        json={"name": "Harbour Lane", "default_reorder_level": 8},
+    )
+    assert updated.status_code == 200
+    assert updated.json["name"] == "Harbour Lane"
+    assert updated.json["default_reorder_level"] == 8
+
+
+def test_stock_request_lifecycle(client):
+    staff_token, staff = _register(client, email="requester@example.test")
+    manager_token, manager = _register(
+        client, name="Manager", email="approver@example.test"
+    )
+    with client.application.app_context():
+        member = db.session.get(User, manager["id"])
+        member.role = "manager"
+        db.session.add(
+            Product(
+                sku="REQ-001",
+                name="Requested Tee",
+                cost_price=Decimal("5.00"),
+                selling_price=Decimal("15.00"),
+                quantity=2,
+                reorder_level=4,
+            )
+        )
+        db.session.commit()
+        product_id = Product.query.filter_by(sku="REQ-001").one().id
+
+    created = client.post(
+        "/api/stock-requests",
+        headers=_auth_header(staff_token),
+        json={
+            "request_number": "REQ-100",
+            "product_id": product_id,
+            "quantity": 6,
+            "note": "Customers asking",
+        },
+    )
+    assert created.status_code == 201
+    request_id = created.json["id"]
+
+    approved = client.post(
+        f"/api/stock-requests/{request_id}/approve",
+        headers=_auth_header(manager_token),
+    )
+    assert approved.status_code == 200
+    assert approved.json["status"] == "approved"
+
+
+def test_deliveries_are_derived_from_purchase_orders_by_role(client):
+    staff_token, _ = _register(client, email="delivery-staff@example.test")
+    manager_token, manager = _register(
+        client, name="Delivery Manager", email="delivery-manager@example.test"
+    )
+    with client.application.app_context():
+        member = db.session.get(User, manager["id"])
+        member.role = "manager"
+        supplier = Supplier(name="Cape Cloth Co.")
+        product = Product(
+            sku="DEL-001",
+            name="Ivory Blouse",
+            cost_price=Decimal("20.00"),
+            selling_price=Decimal("50.00"),
+            quantity=10,
+            reorder_level=2,
+        )
+        db.session.add_all([supplier, product, member])
+        db.session.flush()
+        today = date.today()
+        upcoming = PurchaseOrder(
+            purchase_number="PO-DEL-1",
+            supplier_id=supplier.id,
+            user_id=manager["id"],
+            status="ordered",
+            order_date=today,
+            expected_date=today + timedelta(days=3),
+            total_amount=Decimal("100.00"),
+        )
+        overdue = PurchaseOrder(
+            purchase_number="PO-DEL-2",
+            supplier_id=supplier.id,
+            user_id=manager["id"],
+            status="ordered",
+            order_date=today - timedelta(days=5),
+            expected_date=today - timedelta(days=2),
+            total_amount=Decimal("200.00"),
+        )
+        received = PurchaseOrder(
+            purchase_number="PO-DEL-3",
+            supplier_id=supplier.id,
+            user_id=manager["id"],
+            status="received",
+            order_date=today - timedelta(days=10),
+            expected_date=today - timedelta(days=7),
+            received_at=datetime.now(timezone.utc) - timedelta(days=6),
+            total_amount=Decimal("50.00"),
+        )
+        db.session.add_all([upcoming, overdue, received])
+        db.session.flush()
+        for order, qty, cost in (
+            (upcoming, 2, Decimal("50.00")),
+            (overdue, 4, Decimal("50.00")),
+            (received, 1, Decimal("50.00")),
+        ):
+            db.session.add(
+                PurchaseOrderItem(
+                    purchase_order_id=order.id,
+                    product_id=product.id,
+                    quantity_ordered=qty,
+                    quantity_received=qty if order.status == "received" else 0,
+                    unit_cost=cost,
+                    line_total=cost * qty,
+                )
+            )
+        db.session.commit()
+
+    manager_list = client.get("/api/deliveries", headers=_auth_header(manager_token))
+    assert manager_list.status_code == 200
+    manager_statuses = {item["status"] for item in manager_list.json["items"]}
+    assert manager_statuses == {"scheduled", "delayed", "received"}
+    valued = next(
+        item for item in manager_list.json["items"] if item["id"] == "PO-DEL-1"
+    )
+    assert valued["value"] == 100.0
+    assert "Ivory Blouse" in valued["items"]
+
+    staff_list = client.get("/api/deliveries", headers=_auth_header(staff_token))
+    assert staff_list.status_code == 200
+    staff_statuses = {item["status"] for item in staff_list.json["items"]}
+    assert staff_statuses == {"scheduled"}
+    assert all("value" not in item for item in staff_list.json["items"])

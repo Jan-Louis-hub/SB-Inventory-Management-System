@@ -1,6 +1,6 @@
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import UUID
 
@@ -14,6 +14,7 @@ from app.models import (
     Sale,
     SaleItem,
     StockMovement,
+    Supplier,
     User,
 )
 
@@ -184,6 +185,166 @@ def create_sale(
             )
 
         return sale
+
+
+def adjust_product_stock(*, product_id, quantity_change, user_id, reason):
+    """Apply a stock adjustment and append a matching stock movement."""
+    if isinstance(product_id, bool) or not isinstance(product_id, int) or product_id <= 0:
+        raise InventoryOperationError("product_id must be a positive integer")
+    if (
+        isinstance(quantity_change, bool)
+        or not isinstance(quantity_change, int)
+        or quantity_change == 0
+    ):
+        raise InventoryOperationError("quantity_change must be a non-zero integer")
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        raise InventoryOperationError("user_id must be a positive integer")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 255:
+        raise InventoryOperationError("reason must contain 1 to 255 characters")
+
+    with _atomic_operation():
+        user = db.session.get(User, user_id)
+        if user is None or not user.is_active:
+            raise InventoryOperationError("active user was not found")
+
+        product = db.session.scalar(
+            select(Product).where(Product.id == product_id).with_for_update()
+        )
+        if product is None:
+            raise InventoryOperationError("product was not found")
+        if not product.is_active:
+            raise InventoryOperationError("product is inactive")
+        if product.quantity + quantity_change < 0:
+            raise InventoryOperationError("adjustment would make quantity negative")
+
+        product.quantity += quantity_change
+        movement = StockMovement(
+            product_id=product.id,
+            user_id=user_id,
+            movement_type="adjustment",
+            quantity_change=quantity_change,
+            reason=reason.strip(),
+            reference_type="adjustment",
+            reference_id=None,
+        )
+        db.session.add(movement)
+        db.session.flush()
+        return product, movement
+
+
+def create_purchase_order(
+    *,
+    purchase_number,
+    supplier_id,
+    user_id,
+    order_date,
+    expected_date,
+    items,
+    status="draft",
+):
+    """Create a purchase order with line items in one transaction."""
+    if not isinstance(purchase_number, str) or not purchase_number.strip():
+        raise InventoryOperationError("purchase_number is required")
+    if (
+        isinstance(supplier_id, bool)
+        or not isinstance(supplier_id, int)
+        or supplier_id <= 0
+    ):
+        raise InventoryOperationError("supplier_id must be a positive integer")
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        raise InventoryOperationError("user_id must be a positive integer")
+    if status not in {"draft", "ordered"}:
+        raise InventoryOperationError("status must be draft or ordered")
+    if not isinstance(order_date, date):
+        raise InventoryOperationError("order_date must be a date")
+    if expected_date is not None and not isinstance(expected_date, date):
+        raise InventoryOperationError("expected_date must be a date or null")
+    if not isinstance(items, (list, tuple)) or not items:
+        raise InventoryOperationError("items must contain at least one product")
+
+    prepared = []
+    seen = set()
+    total = Decimal("0.00")
+    for item in items:
+        if not isinstance(item, dict):
+            raise InventoryOperationError("each item must be an object")
+        if set(item) != {"product_id", "quantity_ordered", "unit_cost"}:
+            raise InventoryOperationError(
+                "each item must contain product_id, quantity_ordered, and unit_cost"
+            )
+        product_id = item["product_id"]
+        quantity_ordered = item["quantity_ordered"]
+        if (
+            isinstance(product_id, bool)
+            or not isinstance(product_id, int)
+            or product_id <= 0
+        ):
+            raise InventoryOperationError("product_id must be a positive integer")
+        if product_id in seen:
+            raise InventoryOperationError("duplicate product_id in items")
+        seen.add(product_id)
+        if (
+            isinstance(quantity_ordered, bool)
+            or not isinstance(quantity_ordered, int)
+            or quantity_ordered <= 0
+        ):
+            raise InventoryOperationError("quantity_ordered must be a positive integer")
+        unit_cost = _money(item["unit_cost"], "unit_cost")
+        line_total = (unit_cost * quantity_ordered).quantize(MONEY_QUANTUM)
+        total += line_total
+        prepared.append(
+            {
+                "product_id": product_id,
+                "quantity_ordered": quantity_ordered,
+                "unit_cost": unit_cost,
+                "line_total": line_total,
+            }
+        )
+
+    with _atomic_operation():
+        user = db.session.get(User, user_id)
+        if user is None or not user.is_active:
+            raise InventoryOperationError("active user was not found")
+        supplier = db.session.get(Supplier, supplier_id)
+        if supplier is None:
+            raise InventoryOperationError("supplier was not found")
+
+        products = db.session.scalars(
+            select(Product)
+            .where(Product.id.in_(sorted(seen)))
+            .order_by(Product.id)
+            .with_for_update()
+        ).all()
+        if len(products) != len(seen):
+            raise InventoryOperationError("one or more products were not found")
+        for product in products:
+            if not product.is_active:
+                raise InventoryOperationError(f"product {product.id} is inactive")
+
+        order = PurchaseOrder(
+            purchase_number=purchase_number.strip(),
+            supplier_id=supplier_id,
+            user_id=user_id,
+            status=status,
+            order_date=order_date,
+            expected_date=expected_date,
+            total_amount=total,
+        )
+        db.session.add(order)
+        db.session.flush()
+        for item in prepared:
+            db.session.add(
+                PurchaseOrderItem(
+                    purchase_order_id=order.id,
+                    product_id=item["product_id"],
+                    quantity_ordered=item["quantity_ordered"],
+                    quantity_received=0,
+                    unit_cost=item["unit_cost"],
+                    line_total=item["line_total"],
+                )
+            )
+        db.session.flush()
+        return order
 
 
 def receive_purchase_order_item(*, item_id, quantity, user_id):

@@ -1,102 +1,247 @@
-from flask import Blueprint, jsonify, request
-from app.models import db, Supplier, Product, PurchaseOrder, PurchaseOrderLineItem
-from models import db, PurchaseOrder, PurchaseOrderLineItem, Product, StockMovement
+from datetime import date
 
-purchase_orders_bp = Blueprint('purchase_orders', __name__, url_prefix='/api/purchase-orders')
+from sqlalchemy.exc import IntegrityError
 
-@purchase_orders_bp.route('', methods=['POST'])
-def create_purchase_order():
-    data = request.get_json()
-    supplier_id = data.get('supplier_id')
-    items = data.get('items', []) # List of {product_id, quantity_ordered}
-    
-    # Validate supplier and products exist
-    supplier = Supplier.query.get(supplier_id)
-    if not supplier:
-        return jsonify({"error": "Invalid supplier reference"}), 400
-        
-    po = PurchaseOrder(supplier_id=supplier_id, status='draft')
-    db.session.add(po)
-    db.session.flush() # Get po.id
-    
-    for item_data in items:
-        product = Product.query.get(item_data['product_id'])
-        if not product:
-            db.session.rollback()
-            return jsonify({"error": f"Invalid product reference: {item_data['product_id']}"}), 400
-            
-        po_item = PurchaseOrderLineItem(
-            purchase_order_id=po.id,
-            product_id=product.id,
-            quantity_ordered=item_data['quantity_ordered'],
-            quantity_received=0
+from app.api import api
+from app.api.helpers import (
+    MANAGER_ROLES,
+    STOCK_ROLES,
+    inventory_error_response,
+    json_object,
+    money_value,
+    paginate_query,
+    parse_collection_args,
+    require_auth,
+    require_roles,
+)
+from app.extensions import db
+from app.models import PurchaseOrder, PurchaseOrderItem
+from app.services.inventory import (
+    InventoryOperationError,
+    create_purchase_order,
+    receive_purchase_order_item,
+)
+
+
+def serialize_purchase_order(order, include_items=False):
+    payload = {
+        "id": order.id,
+        "purchase_number": order.purchase_number,
+        "supplier_id": order.supplier_id,
+        "supplier": order.supplier.name if order.supplier is not None else None,
+        "user_id": order.user_id,
+        "status": order.status,
+        "order_date": order.order_date.isoformat(),
+        "expected_date": (
+            order.expected_date.isoformat() if order.expected_date is not None else None
+        ),
+        "received_at": (
+            order.received_at.isoformat() if order.received_at is not None else None
+        ),
+        "total_amount": money_value(order.total_amount),
+    }
+    if include_items:
+        items = (
+            PurchaseOrderItem.query.filter_by(purchase_order_id=order.id)
+            .order_by(PurchaseOrderItem.id)
+            .all()
         )
-        db.session.add(po_item)
-        
-    db.session.commit()
-    return jsonify(po.to_dict()), 201
+        payload["items"] = [
+            {
+                "id": item.id,
+                "product_id": item.product_id,
+                "product": item.product.name if item.product is not None else None,
+                "sku": item.product.sku if item.product is not None else None,
+                "quantity_ordered": item.quantity_ordered,
+                "quantity_received": item.quantity_received,
+                "unit_cost": money_value(item.unit_cost),
+                "line_total": money_value(item.line_total),
+            }
+            for item in items
+        ]
+    return payload
 
-@purchase_orders_bp.route('/<int:po_id>/receive', methods=['POST'])
-def receive_purchase_order(po_id):
-    data = request.get_json()
-    received_items = data.get('items', []) # List of {line_item_id, quantity_received}
 
-    po = PurchaseOrder.query.get(po_id)
-    if not po:
-        return jsonify({"error": "Purchase order not found"}), 404
+def _parse_date(value, field, required=True):
+    if value is None:
+        if required:
+            return None, f"{field} is required"
+        return None, None
+    if not isinstance(value, str):
+        return None, f"{field} must be an ISO date string"
+    try:
+        return date.fromisoformat(value), None
+    except ValueError:
+        return None, f"{field} must be an ISO date string"
 
-    # Prevent duplicate submissions if already fully received or closed
-    if po.status == 'received':
-        return jsonify({"error": "This purchase order has already been fully received."}), 400
+
+@api.get("/purchase-orders")
+@require_auth
+def list_purchase_orders(user):
+    params, error = parse_collection_args(
+        allowed_sorts={"order_date", "id", "status", "purchase_number"},
+        default_sort="order_date",
+        allowed_filters={"status", "supplier_id"},
+    )
+    if error:
+        return error
+
+    query = PurchaseOrder.query
+    filters = params["filters"]
+    if "status" in filters:
+        query = query.filter_by(status=filters["status"])
+    if "supplier_id" in filters:
+        try:
+            supplier_id = int(filters["supplier_id"])
+        except (TypeError, ValueError):
+            return {"error": "supplier_id must be an integer"}, 400
+        query = query.filter_by(supplier_id=supplier_id)
+
+    # Staff see only ordered/partial/received; managers and controllers see all
+    if user.role not in STOCK_ROLES:
+        query = query.filter(
+            PurchaseOrder.status.in_(("ordered", "partial", "received"))
+        )
+
+    result = paginate_query(
+        query,
+        PurchaseOrder,
+        params["page"],
+        params["per_page"],
+        params["sort"],
+        params["direction"],
+        {
+            "order_date": PurchaseOrder.order_date,
+            "id": PurchaseOrder.id,
+            "status": PurchaseOrder.status,
+            "purchase_number": PurchaseOrder.purchase_number,
+        },
+    )
+    return {
+        "items": [serialize_purchase_order(item) for item in result["items"]],
+        "pagination": result["pagination"],
+    }, 200
+
+
+@api.post("/purchase-orders")
+@require_roles(*MANAGER_ROLES)
+def create_order(user):
+    payload, error = json_object(
+        {
+            "purchase_number",
+            "supplier_id",
+            "order_date",
+            "expected_date",
+            "status",
+            "items",
+        }
+    )
+    if error:
+        return error
+
+    order_date, order_date_error = _parse_date(payload["order_date"], "order_date")
+    if order_date_error:
+        return {"error": order_date_error}, 400
+    expected_date, expected_date_error = _parse_date(
+        payload["expected_date"], "expected_date", required=False
+    )
+    if expected_date_error:
+        return {"error": expected_date_error}, 400
 
     try:
-        all_fully_received = True
-
-        for rec in received_items:
-            line_item_id = rec.get('line_item_id')
-            qty_incoming = rec.get('quantity_received', 0)
-
-            # Find specific line item
-            line_item = PurchaseOrderLineItem.query.get(line_item_id)
-            if not line_item or line_item.purchase_order_id != po.id:
-                db.session.rollback()
-                return jsonify({"error": f"Invalid line item reference: {line_item_id}"}), 400
-
-            # Prevent receiving more than what was ordered
-            remaining_to_receive = line_item.quantity_ordered - line_item.quantity_received
-            if qty_incoming > remaining_to_receive:
-                db.session.rollback()
-                return jsonify({"error": f'Cannot receive more than remaining ordered quantity for item {line_item.product_id}'}), 400
-
-            if qty_incoming > 0:
-                # Update line item received count
-                line_item.quantity_received += qty_incoming
-
-                # Increase actual product stock level
-                product = Product.query.get(line_item.product_id)
-                product.stock_level += qty_incoming
-
-                # Record stock movement audit trail
-                movement = StockMovement(
-                    product_id=product.id,
-                    quantity=qty_incoming,
-                    movement_type='purchase_order_receive',
-                    reference_id=po.id
-                )
-                db.session.add(movement)
-
-            if line_item.quantity_received < line_item.quantity_ordered:
-                all_fully_received = False
-
-        # Update overall Purchase Order status
-        if all_fully_received:
-            po.status = 'received'
-        else:
-            po.status = 'partially_received'
-
+        order = create_purchase_order(
+            purchase_number=payload["purchase_number"],
+            supplier_id=payload["supplier_id"],
+            user_id=user.id,
+            order_date=order_date,
+            expected_date=expected_date,
+            items=payload["items"],
+            status=payload["status"],
+        )
         db.session.commit()
-        return jsonify(po.to_dict()), 200
-
-    except Exception as e:
+    except InventoryOperationError as exc:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        return inventory_error_response(exc)
+    except IntegrityError:
+        db.session.rollback()
+        return {"error": "purchase_number already exists"}, 409
+
+    return serialize_purchase_order(order, include_items=True), 201
+
+
+@api.get("/purchase-orders/<int:order_id>")
+@require_auth
+def get_purchase_order(user, order_id):
+    order = db.session.get(PurchaseOrder, order_id)
+    if order is None:
+        return {"error": "Purchase order not found"}, 404
+    if user.role not in STOCK_ROLES and order.status not in {
+        "ordered",
+        "partial",
+        "received",
+    }:
+        return {"error": "Purchase order not found"}, 404
+    return serialize_purchase_order(order, include_items=True), 200
+
+
+@api.post("/purchase-orders/<int:order_id>/place")
+@require_roles(*MANAGER_ROLES)
+def place_purchase_order(user, order_id):
+    order = db.session.get(PurchaseOrder, order_id)
+    if order is None:
+        return {"error": "Purchase order not found"}, 404
+    if order.status != "draft":
+        return {"error": "Only draft purchase orders can be placed"}, 409
+    order.status = "ordered"
+    db.session.commit()
+    return serialize_purchase_order(order, include_items=True), 200
+
+
+@api.post("/purchase-orders/<int:order_id>/cancel")
+@require_roles(*MANAGER_ROLES)
+def cancel_purchase_order(user, order_id):
+    order = db.session.get(PurchaseOrder, order_id)
+    if order is None:
+        return {"error": "Purchase order not found"}, 404
+    if order.status not in {"draft", "ordered"}:
+        return {
+            "error": "Only draft or ordered purchase orders with no receipts can be cancelled"
+        }, 409
+
+    received = (
+        PurchaseOrderItem.query.filter(
+            PurchaseOrderItem.purchase_order_id == order.id,
+            PurchaseOrderItem.quantity_received > 0,
+        )
+        .limit(1)
+        .first()
+    )
+    if received is not None:
+        return {
+            "error": "Purchase orders with received stock cannot be cancelled"
+        }, 409
+
+    order.status = "cancelled"
+    db.session.commit()
+    return serialize_purchase_order(order, include_items=True), 200
+
+
+@api.post("/purchase-orders/items/<int:item_id>/receive")
+@require_roles(*STOCK_ROLES)
+def receive_item(user, item_id):
+    payload, error = json_object({"quantity"})
+    if error:
+        return error
+
+    try:
+        order = receive_purchase_order_item(
+            item_id=item_id,
+            quantity=payload["quantity"],
+            user_id=user.id,
+        )
+        db.session.commit()
+    except InventoryOperationError as exc:
+        db.session.rollback()
+        return inventory_error_response(exc)
+
+    return serialize_purchase_order(order, include_items=True), 200
