@@ -20,28 +20,29 @@ import {
 } from "@/components/dashboard/activity-panel"
 import { StockFlowChart } from "@/components/stock-flow-chart"
 import { cn } from "@/lib/utils"
+import { movementsFor } from "@/lib/activity"
+import {
+  getScheduledCountSummary,
+  getUpcomingCounts,
+} from "@/lib/counts"
+import { getInventorySnapshot, getLowStockPreview } from "@/lib/inventory"
+import { getControllerIncoming, getOrderSnapshot } from "@/lib/orders"
 
-// Mock data. Replace with database queries or API calls.
 // No prices anywhere: stock controllers don't see order values.
+const snap = getInventorySnapshot()
+const orderSnap = getOrderSnapshot()
+const countSnap = getScheduledCountSummary()
+const lowStock: LowStockItem[] = getLowStockPreview()
+const movements: Movement[] = movementsFor("controller")
+const incoming = getControllerIncoming()
+const counts = getUpcomingCounts()
+const dueToday = incoming.filter((order) => order.due === "Today")
+
 const stats: Kpi[] = [
-  { title: "Below minimum", value: "12", note: "4 critical", tone: "bad", icon: AlertTriangle, href: "/controller/stock", alert: true },
-  { title: "Due today", value: "3", note: "1 delayed", tone: "neutral", icon: Truck, href: "/controller/orders" },
-  { title: "To check in", value: "7", note: "Approved, shipped or delayed", tone: "neutral", icon: PackageCheck, href: "/controller/orders" },
-  { title: "Counts due", value: "2", note: "Next: Aisle 4, tomorrow", tone: "neutral", icon: ClipboardCheck, href: "/controller/counts" },
-]
-
-const lowStock: LowStockItem[] = [
-  { sku: "BEV-042", name: "Energy Drink 500ml", category: "Beverages", current: 4, min: 15 },
-  { sku: "SNK-112", name: "Organic Protein Bar 60g", category: "Snacks", current: 6, min: 20 },
-  { sku: "STA-001", name: "A4 Hardcover Notebook 192p", category: "Stationery", current: 8, min: 10 },
-  { sku: "HSE-003", name: "Dish Soap 750ml", category: "Household", current: 9, min: 12 },
-]
-
-const movements: Movement[] = [
-  { id: 1, sku: "BEV-001", product: "Sparkling Mineral Water 500ml", type: "IN", qty: "+120", user: "controller_james", time: "10 mins ago" },
-  { id: 2, sku: "SNK-001", product: "Artisanal Potato Chips 125g", type: "OUT", qty: "-15", user: "clerk_sarah", time: "35 mins ago" },
-  { id: 3, sku: "STA-001", product: "A4 Hardcover Notebook 192p", type: "IN", qty: "+50", user: "controller_james", time: "2 hours ago" },
-  { id: 4, sku: "STA-014", product: "Ballpoint Pens (box of 50)", type: "OUT", qty: "-8", user: "clerk_sarah", time: "3 hours ago" },
+  { title: "Below minimum", value: String(snap.belowMin), note: `${snap.critical} critical`, tone: snap.belowMin > 0 ? "bad" : "good", icon: AlertTriangle, href: "/controller/stock", alert: snap.belowMin > 0 },
+  { title: "Due today", value: String(dueToday.length), note: dueToday[0]?.supplier ?? "Nothing due", tone: "neutral", icon: Truck, href: "/controller/orders" },
+  { title: "To check in", value: String(orderSnap.toCheckIn), note: "Approved, shipped or delayed", tone: "neutral", icon: PackageCheck, href: "/controller/orders" },
+  { title: "Counts due", value: String(countSnap.due), note: countSnap.note, tone: "neutral", icon: ClipboardCheck, href: "/controller/counts" },
 ]
 
 type Status = "approved" | "shipped" | "delayed"
@@ -53,25 +54,6 @@ const STATUS_STYLES: Record<Status, string> = {
 }
 
 // "due" is a plain string so the page never reads the clock during prerender
-const incoming: {
-  id: string
-  supplier: string
-  items: string
-  due: string
-  status: Status
-}[] = [
-  { id: "PO-1001", supplier: "Acme Supplies", items: "24 boxes of widgets", due: "Today", status: "shipped" },
-  { id: "PO-1003", supplier: "Globex", items: "Packaging materials", due: "2 days overdue", status: "delayed" },
-  { id: "PO-1002", supplier: "FreshCo", items: "10 pallets of stock", due: "In 3 days", status: "approved" },
-  { id: "PO-1009", supplier: "Hooli", items: "Shelving units", due: "In 5 days", status: "approved" },
-]
-
-const counts = [
-  { area: "Aisle 4: Beverages", items: 86, due: "Tomorrow", progress: 0 },
-  { area: "Back store", items: 142, due: "Friday", progress: 35 },
-  { area: "Aisle 1: Stationery", items: 64, due: "Next week", progress: 0 },
-]
-
 export default function ControllerDashboardPage() {
   return (
     <div className="flex flex-col gap-5">
@@ -104,7 +86,7 @@ export default function ControllerDashboardPage() {
         <LowStockPanel
           items={lowStock}
           href="/controller/stock"
-          linkLabel="View all 12"
+          linkLabel={`View all ${snap.belowMin}`}
         />
       </div>
 

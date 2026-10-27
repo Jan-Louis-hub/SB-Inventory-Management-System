@@ -19,28 +19,25 @@ import {
   type Movement,
 } from "@/components/dashboard/activity-panel"
 import { cn } from "@/lib/utils"
+import { movementsFor } from "@/lib/activity"
+import { getInventorySnapshot, getLowStockPreview } from "@/lib/inventory"
+import { getStaffIncoming } from "@/lib/orders"
+import { getRequestPreview, getRequestSnapshot } from "@/lib/requests"
 
-// Mock data. Replace with database queries or API calls.
 // No prices and no order statuses: staff members only see what they need.
+const snap = getInventorySnapshot()
+const requestSnap = getRequestSnapshot()
+const lowStock: LowStockItem[] = getLowStockPreview()
+const myActivity: Movement[] = movementsFor("staff")
+const myRequests = getRequestPreview()
+const incoming = getStaffIncoming()
+const arrivingToday = incoming.filter((order) => order.due === "Today").length
+
 const stats: Kpi[] = [
-  { title: "Products", value: "1,248", note: "In the catalogue", tone: "neutral", icon: Package, href: "/staff/inventory" },
-  { title: "Low stock", value: "12", note: "4 critical", tone: "bad", icon: AlertTriangle, href: "/staff/inventory", alert: true },
-  { title: "My open requests", value: "3", note: "1 approved", tone: "good", icon: Inbox, href: "/staff/requests" },
-  { title: "Arriving this week", value: "4", note: "1 today", tone: "neutral", icon: Truck, href: "/staff" },
-]
-
-const lowStock: LowStockItem[] = [
-  { sku: "BEV-042", name: "Energy Drink 500ml", category: "Beverages", current: 4, min: 15 },
-  { sku: "SNK-112", name: "Organic Protein Bar 60g", category: "Snacks", current: 6, min: 20 },
-  { sku: "STA-001", name: "A4 Hardcover Notebook 192p", category: "Stationery", current: 8, min: 10 },
-  { sku: "HSE-003", name: "Dish Soap 750ml", category: "Household", current: 9, min: 12 },
-]
-
-// Only this user's own actions
-const myActivity: Movement[] = [
-  { id: 1, sku: "SNK-001", product: "Artisanal Potato Chips 125g", type: "OUT", qty: "-15", user: "clerk_sarah", time: "35 mins ago" },
-  { id: 2, sku: "STA-014", product: "Ballpoint Pens (box of 50)", type: "OUT", qty: "-8", user: "clerk_sarah", time: "3 hours ago" },
-  { id: 3, sku: "BEV-001", product: "Sparkling Mineral Water 500ml", type: "OUT", qty: "-24", user: "clerk_sarah", time: "Yesterday" },
+  { title: "Products", value: String(snap.products), note: "In the catalogue", tone: "neutral", icon: Package, href: "/staff/inventory" },
+  { title: "Low stock", value: String(snap.belowMin), note: `${snap.critical} critical`, tone: snap.belowMin > 0 ? "bad" : "good", icon: AlertTriangle, href: "/staff/inventory", alert: snap.belowMin > 0 },
+  { title: "My open requests", value: String(requestSnap.open), note: `${requestSnap.approved} approved`, tone: "good", icon: Inbox, href: "/staff/requests" },
+  { title: "Arriving this week", value: String(incoming.length), note: arrivingToday === 1 ? "1 today" : `${arrivingToday} today`, tone: "neutral", icon: Truck, href: "/staff" },
 ]
 
 type RequestStatus = "pending" | "approved" | "declined"
@@ -50,27 +47,6 @@ const REQUEST_STYLES: Record<RequestStatus, string> = {
   approved: "bg-green-500/10 text-green-600 dark:text-green-400",
   declined: "bg-muted text-muted-foreground",
 }
-
-const myRequests: {
-  id: string
-  item: string
-  qty: string
-  when: string
-  status: RequestStatus
-}[] = [
-  { id: "REQ-021", item: "Energy Drink 500ml", qty: "2 cases", when: "Today", status: "pending" },
-  { id: "REQ-019", item: "Receipt paper rolls", qty: "10 rolls", when: "Yesterday", status: "approved" },
-  { id: "REQ-018", item: "Cleaning gloves", qty: "1 box", when: "Yesterday", status: "pending" },
-  { id: "REQ-015", item: "Shelf labels", qty: "200 labels", when: "Monday", status: "declined" },
-]
-
-// Plain strings so the page never reads the clock during prerender.
-// No status or prices: staff only see what is arriving and when.
-const incoming = [
-  { id: "PO-1001", supplier: "Acme Supplies", items: "24 boxes of widgets", due: "Today" },
-  { id: "PO-1003", supplier: "Globex", items: "Packaging materials", due: "In 3 days" },
-  { id: "PO-1009", supplier: "Hooli", items: "Shelving units", due: "In 5 days" },
-]
 
 export default function StaffDashboardPage() {
   return (
@@ -135,7 +111,7 @@ export default function StaffDashboardPage() {
         <LowStockPanel
           items={lowStock}
           href="/staff/inventory"
-          linkLabel="View all 12"
+          linkLabel={`View all ${snap.belowMin}`}
         />
       </div>
 

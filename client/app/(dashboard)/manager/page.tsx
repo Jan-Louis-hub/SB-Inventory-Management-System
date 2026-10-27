@@ -20,34 +20,22 @@ import {
   type Movement,
 } from "@/components/dashboard/activity-panel"
 import { StockFlowChart } from "@/components/stock-flow-chart"
+import { movementsFor } from "@/lib/activity"
+import { money } from "@/lib/format"
+import { getInventorySnapshot, getLowStockPreview } from "@/lib/inventory"
+import { getOrderSnapshot, getPendingApprovals } from "@/lib/orders"
 
-// Mock data. Replace with database queries or API calls.
+const snap = getInventorySnapshot()
+const orderSnap = getOrderSnapshot()
+const lowStock: LowStockItem[] = getLowStockPreview()
+const movements: Movement[] = movementsFor("manager")
+const pendingOrders = getPendingApprovals()
+
 const stats: Kpi[] = [
-  { title: "Total products", value: "1,248", note: "+4.2% this month", tone: "good", icon: Package, href: "/manager/inventory" },
-  { title: "Low stock alerts", value: "12", note: "Needs attention", tone: "bad", icon: AlertTriangle, href: "/manager/inventory", alert: true },
-  { title: "Active orders", value: "34", note: "8 pending approval", tone: "neutral", icon: ShoppingCart, href: "/manager/orders" },
-  { title: "Stock value", value: "R 482,500", note: "+12.1% vs last month", tone: "good", icon: Wallet, href: "/manager/reports" },
-]
-
-const lowStock: LowStockItem[] = [
-  { sku: "BEV-042", name: "Energy Drink 500ml", category: "Beverages", current: 4, min: 15 },
-  { sku: "SNK-112", name: "Organic Protein Bar 60g", category: "Snacks", current: 6, min: 20 },
-  { sku: "STA-001", name: "A4 Hardcover Notebook 192p", category: "Stationery", current: 8, min: 10 },
-  { sku: "HSE-003", name: "Dish Soap 750ml", category: "Household", current: 9, min: 12 },
-]
-
-const movements: Movement[] = [
-  { id: 1, sku: "BEV-001", product: "Sparkling Mineral Water 500ml", type: "IN", qty: "+120", user: "manager_admin", time: "10 mins ago" },
-  { id: 2, sku: "SNK-001", product: "Artisanal Potato Chips 125g", type: "OUT", qty: "-15", user: "clerk_sarah", time: "35 mins ago" },
-  { id: 3, sku: "STA-001", product: "A4 Hardcover Notebook 192p", type: "IN", qty: "+50", user: "manager_admin", time: "2 hours ago" },
-  { id: 4, sku: "STA-014", product: "Ballpoint Pens (box of 50)", type: "OUT", qty: "-8", user: "clerk_sarah", time: "3 hours ago" },
-  { id: 5, sku: "HSE-003", product: "Dish Soap 750ml", type: "IN", qty: "+36", user: "controller_james", time: "Yesterday" },
-]
-
-const pendingOrders = [
-  { id: "PO-1004", supplier: "Initech", items: "6 crates of parts", total: "R 5,100" },
-  { id: "PO-1006", supplier: "Umbrella Co", items: "Cleaning supplies", total: "R 640" },
-  { id: "PO-1008", supplier: "Globex", items: "Packaging materials", total: "R 1,750" },
+  { title: "Total products", value: String(snap.products), note: `${snap.categories} categories`, tone: "good", icon: Package, href: "/manager/inventory" },
+  { title: "Low stock alerts", value: String(snap.belowMin), note: `${snap.critical} critical`, tone: snap.belowMin > 0 ? "bad" : "good", icon: AlertTriangle, href: "/manager/inventory", alert: snap.belowMin > 0 },
+  { title: "Active orders", value: String(orderSnap.open), note: `${orderSnap.pending} pending approval`, tone: "neutral", icon: ShoppingCart, href: "/manager/orders" },
+  { title: "Stock value", value: money.format(snap.value), note: "At unit cost", tone: "good", icon: Wallet, href: "/manager/reports" },
 ]
 
 export default function ManagerDashboardPage() {
@@ -85,14 +73,14 @@ export default function ManagerDashboardPage() {
         <LowStockPanel
           items={lowStock}
           href="/manager/inventory"
-          linkLabel="View all 12"
+          linkLabel={`View all ${snap.belowMin}`}
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <ActivityPanel
           items={movements}
-          href="/manager/reports"
+          href="/manager/reports#audit"
           linkLabel="Audit log"
           className="lg:col-span-2"
         />

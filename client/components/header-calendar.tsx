@@ -12,6 +12,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { money } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import {
   getDeliveriesForRole,
@@ -34,9 +35,6 @@ const STATUS_STYLES: Record<DeliveryStatus, string> = {
   delayed: "bg-red-500/15 text-red-600 dark:text-red-400",
   received: "bg-muted text-muted-foreground",
 }
-
-// Change the currency to match your business
-const money = new Intl.NumberFormat("en", { style: "currency", currency: "USD" })
 
 export function HeaderCalendar({ role }: { role: Role }) {
   const view = ROLE_VIEW[role]
