@@ -45,7 +45,7 @@ export function SettingsView() {
     <form onSubmit={save} className="flex flex-col gap-5">
       <PageHeader
         title="Settings"
-        description={`Shop profile and the alerts ${SHOP.name} sends.`}
+        description="Shop profile and the alerts this shop sends."
         actions={
           <div className="flex items-center gap-3">
             {saved && (

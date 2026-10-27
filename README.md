@@ -178,5 +178,3 @@ git push
 ```
 
 Never commit `.env` files, credentials, database dumps, or production data. Use `.env.example` only for variable names and non-secret placeholders.
-
-Use  manager@demo.local ,  controller@demo.local , or  staff@demo.local —any password works. TO login for the diffrent roles

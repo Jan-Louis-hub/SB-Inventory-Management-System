@@ -51,61 +51,13 @@ export const ROLE_VIEW: Record<
   },
 }
 
-// Same purchase orders as lib/orders.ts, dated from today so the calendar
-// always has something to show. Replace with a fetch that already filters by role.
-const MOCK: RawDelivery[] = [
-  {
-    id: "PO-1045",
-    supplier: "Little Thread",
-    items: "24 Khaki Kids Chino Shorts",
-    dayOffset: -6,
-    status: "received",
-    value: 3840,
-    visibleTo: ["inventory_manager", "stock_controller"],
-  },
-  {
-    id: "PO-1042",
-    supplier: "Highveld Denim",
-    items: "30 Black High-rise Jeans, 12 Camel Trench Coats",
-    dayOffset: -2,
-    status: "delayed",
-    value: 19320,
-    visibleTo: ["inventory_manager", "stock_controller"],
-  },
-  {
-    id: "PO-1041",
-    supplier: "Cape Cloth Co.",
-    items: "24 Ivory Silk Blouses, 18 Sand Slip Dresses",
-    dayOffset: 0,
-    status: "arrived",
-    value: 15240,
-    visibleTo: ["inventory_manager", "stock_controller", "staff_member"],
-  },
-  {
-    id: "PO-1043",
-    supplier: "Karoo Knitwear",
-    items: "16 Camel Cashmere Cardigans",
-    dayOffset: 3,
-    status: "scheduled",
-    value: 14720,
-    visibleTo: ["inventory_manager", "stock_controller", "staff_member"],
-  },
-  {
-    id: "PO-1048",
-    supplier: "Sole & Stitch",
-    items: "15 Tan Leather Loafers",
-    dayOffset: 5,
-    status: "scheduled",
-    value: 8100,
-    visibleTo: ["inventory_manager", "stock_controller", "staff_member"],
-  },
-]
+const DELIVERIES: RawDelivery[] = []
 
 export function getDeliveriesForRole(role: Role): Delivery[] {
   const view = ROLE_VIEW[role]
   const today = new Date()
 
-  return MOCK.filter(
+  return DELIVERIES.filter(
     (delivery) =>
       delivery.visibleTo.includes(role) && view.statuses.includes(delivery.status)
   ).map((delivery) => ({
@@ -114,7 +66,6 @@ export function getDeliveriesForRole(role: Role): Delivery[] {
     items: delivery.items,
     status: delivery.status,
     date: addDays(today, delivery.dayOffset),
-    // Prices are removed for roles that shouldn't see them
     ...(view.showValue ? { value: delivery.value } : {}),
   }))
 }

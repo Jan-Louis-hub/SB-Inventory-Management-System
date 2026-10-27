@@ -1,10 +1,6 @@
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 
-import {
-  getMockUserFromSessionToken,
-  isMockAuthEnabled,
-} from "@/lib/auth-proxy"
 import type { Role } from "@/lib/roles"
 
 type AuthenticatedUser = {
@@ -21,23 +17,6 @@ export async function requireUserRole(requiredRole: Role): Promise<Authenticated
   const token = (await cookies()).get("sb_inventory_session")?.value
   if (!token) {
     redirect("/login")
-  }
-
-  if (isMockAuthEnabled()) {
-    const user = getMockUserFromSessionToken(token)
-    if (!user) {
-      redirect("/login")
-    }
-    if (user.role !== requiredRole) {
-      const home =
-        user.role === "inventory_manager"
-          ? "/manager"
-          : user.role === "stock_controller"
-            ? "/controller"
-            : "/staff"
-      redirect(home)
-    }
-    return user
   }
 
   let response: Response

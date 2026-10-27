@@ -256,7 +256,7 @@ export function SuppliersView() {
             <SheetHeader>
               <SheetTitle>Add supplier</SheetTitle>
               <SheetDescription>
-                A wholesaler Harbour Lane can raise purchase orders with.
+                A wholesaler you can raise purchase orders with.
               </SheetDescription>
             </SheetHeader>
             <div className="flex flex-col gap-4 px-4">

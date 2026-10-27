@@ -229,7 +229,7 @@ export function StaffView() {
             <SheetHeader>
               <SheetTitle>Add user</SheetTitle>
               <SheetDescription>
-                Someone who needs access to Harbour Lane.
+                Someone who needs access to the inventory system.
               </SheetDescription>
             </SheetHeader>
             <div className="flex flex-col gap-4 px-4">
@@ -247,7 +247,7 @@ export function StaffView() {
                   id="staff-email"
                   type="email"
                   value={email}
-                  placeholder="name@harbourlane.co.za"
+                  placeholder="name@example.com"
                   onChange={(event) => setEmail(event.target.value)}
                 />
               </div>
