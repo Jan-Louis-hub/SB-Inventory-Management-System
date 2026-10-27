@@ -37,7 +37,9 @@ export function ActivityPanel({
       className={className}
     >
       <ul className="divide-y">
-        {items.map((m) => {
+        {items.length === 0 ? (
+          <li className="p-4 text-sm text-muted-foreground">No stock movements recorded yet.</li>
+        ) : items.map((m) => {
           const isIn = m.type === "IN"
           return (
             <li key={m.id} className="flex items-center gap-3 px-4 py-3">

@@ -7,167 +7,235 @@ import { Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { SHOP } from "@/lib/shop"
+
+type BusinessSettings = {
+  name: string
+  address: string
+  phone: string
+  email: string
+  currency: string
+  default_min: number
+  low_stock_alerts: boolean
+  order_alerts: boolean
+  weekly_summary: boolean
+}
+
+async function requestSettings(
+  method: "GET" | "PATCH",
+  settings?: BusinessSettings
+): Promise<BusinessSettings> {
+  const response = await fetch("/api/inventory/settings", {
+    method,
+    headers: settings ? { "Content-Type": "application/json" } : undefined,
+    body: settings ? JSON.stringify(settings) : undefined,
+    cache: "no-store",
+  })
+  const result = (await response.json().catch(() => ({}))) as {
+    settings?: BusinessSettings
+    error?: string
+  }
+  if (!response.ok || !result.settings) {
+    throw new Error(result.error ?? "Unable to load or save business settings")
+  }
+  return result.settings
+}
 
 export function SettingsView() {
-  const [name, setName] = React.useState(SHOP.name)
-  const [address, setAddress] = React.useState(SHOP.address)
-  const [phone, setPhone] = React.useState(SHOP.phone)
-  const [email, setEmail] = React.useState(SHOP.email)
-  const [defaultMin, setDefaultMin] = React.useState("8")
-  const [lowStock, setLowStock] = React.useState(true)
-  const [orderEmails, setOrderEmails] = React.useState(true)
-  const [weeklySummary, setWeeklySummary] = React.useState(false)
+  const [settings, setSettings] = React.useState<BusinessSettings | null>(null)
+  const [loading, setLoading] = React.useState(true)
+  const [saving, setSaving] = React.useState(false)
   const [saved, setSaved] = React.useState(false)
   const [error, setError] = React.useState("")
 
-  function touch() {
+  React.useEffect(() => {
+    let active = true
+    requestSettings("GET")
+      .then((result) => {
+        if (active) setSettings(result)
+      })
+      .catch((cause: unknown) => {
+        if (active) {
+          setError(cause instanceof Error ? cause.message : "Unable to load settings")
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  function update<K extends keyof BusinessSettings>(
+    field: K,
+    value: BusinessSettings[K]
+  ) {
+    setSettings((current) => current ? { ...current, [field]: value } : current)
     setSaved(false)
     setError("")
   }
 
-  function save(event: React.FormEvent) {
+  async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const minimum = Number.parseInt(defaultMin, 10)
-    if (!name.trim() || !email.trim()) {
-      setError("Shop name and email are required.")
-      return
-    }
-    if (!Number.isInteger(minimum) || minimum < 0) {
-      setError("Default minimum has to be zero or more.")
-      return
-    }
+    if (!settings) return
+    setSaving(true)
+    setSaved(false)
     setError("")
-    setSaved(true)
+    try {
+      setSettings(await requestSettings("PATCH", settings))
+      setSaved(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to save settings")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <form onSubmit={save} className="flex flex-col gap-5">
       <PageHeader
         title="Settings"
-        description={`Shop profile and the alerts ${SHOP.name} sends.`}
+        description="Business profile and notification preferences."
         actions={
           <div className="flex items-center gap-3">
             {saved && (
-              <span className="text-xs text-green-600 dark:text-green-400">
+              <span role="status" className="text-xs text-green-600 dark:text-green-400">
                 Saved
               </span>
             )}
-            <Button type="submit" className="rounded-sm">
-              Save changes
+            <Button type="submit" className="rounded-sm" disabled={!settings || loading || saving}>
+              {saving ? "Saving…" : "Save changes"}
             </Button>
           </div>
         }
       />
 
-      <Panel
-        title="Shop profile"
-        description="Used on purchase orders and exported reports."
-      >
-        <div className="grid gap-4 p-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="shop-name">Shop name</Label>
-            <Input
-              id="shop-name"
-              value={name}
-              onChange={(event) => {
-                touch()
-                setName(event.target.value)
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="shop-email">Email</Label>
-            <Input
-              id="shop-email"
-              type="email"
-              value={email}
-              onChange={(event) => {
-                touch()
-                setEmail(event.target.value)
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor="shop-address">Address</Label>
-            <Input
-              id="shop-address"
-              value={address}
-              onChange={(event) => {
-                touch()
-                setAddress(event.target.value)
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="shop-phone">Phone</Label>
-            <Input
-              id="shop-phone"
-              value={phone}
-              onChange={(event) => {
-                touch()
-                setPhone(event.target.value)
-              }}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Currency</Label>
-            <p className="flex h-8 items-center text-sm">{SHOP.currency}</p>
-          </div>
-        </div>
-      </Panel>
+      {loading && <p role="status" className="text-sm text-muted-foreground">Loading settings…</p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
-      <Panel
-        title="Alerts and reorders"
-        description="What the inventory manager hears about."
-      >
-        <div className="flex flex-col gap-3 p-4">
-          <div className="flex max-w-xs flex-col gap-1.5">
-            <Label htmlFor="default-min">Default minimum for a new style</Label>
-            <Input
-              id="default-min"
-              type="number"
-              min={0}
-              value={defaultMin}
-              onChange={(event) => {
-                touch()
-                setDefaultMin(event.target.value)
-              }}
-            />
-          </div>
+      {settings && (
+        <>
+          <Panel
+            title="Business profile"
+            description="Used on purchase orders and exported reports."
+          >
+            <div className="grid gap-4 p-4 sm:grid-cols-2">
+              <Field
+                id="business-name"
+                label="Business name"
+                value={settings.name}
+                onChange={(value) => update("name", value)}
+                required
+              />
+              <Field
+                id="business-email"
+                label="Email"
+                type="email"
+                value={settings.email}
+                onChange={(value) => update("email", value)}
+              />
+              <Field
+                id="business-address"
+                label="Address"
+                value={settings.address}
+                onChange={(value) => update("address", value)}
+                className="sm:col-span-2"
+              />
+              <Field
+                id="business-phone"
+                label="Phone"
+                value={settings.phone}
+                onChange={(value) => update("phone", value)}
+              />
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="business-currency">Currency</Label>
+                <Input id="business-currency" value={settings.currency} disabled />
+              </div>
+            </div>
+          </Panel>
 
-          <Toggle
-            checked={lowStock}
-            title="Low stock"
-            description="Email when a style falls under its minimum."
-            onChange={(checked) => {
-              touch()
-              setLowStock(checked)
-            }}
-          />
-          <Toggle
-            checked={orderEmails}
-            title="Orders waiting"
-            description="Email when a purchase order needs approval."
-            onChange={(checked) => {
-              touch()
-              setOrderEmails(checked)
-            }}
-          />
-          <Toggle
-            checked={weeklySummary}
-            title="Monday summary"
-            description="A short note of what sold over the weekend."
-            onChange={(checked) => {
-              touch()
-              setWeeklySummary(checked)
-            }}
-          />
-
-          {error && <p className="text-xs text-destructive">{error}</p>}
-        </div>
-      </Panel>
+          <Panel
+            title="Alerts and reorders"
+            description="Saved preferences for inventory notifications."
+          >
+            <div className="flex flex-col gap-3 p-4">
+              <div className="flex max-w-xs flex-col gap-1.5">
+                <Label htmlFor="default-min">Default minimum for a new product</Label>
+                <Input
+                  id="default-min"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={settings.default_min}
+                  onChange={(event) => {
+                    const value = Number(event.target.value)
+                    if (Number.isSafeInteger(value) && value >= 0) {
+                      update("default_min", value)
+                    }
+                  }}
+                  disabled={saving}
+                />
+              </div>
+              <Toggle
+                checked={settings.low_stock_alerts}
+                title="Low stock"
+                description="Preference for alerts when stock reaches its minimum."
+                disabled={saving}
+                onChange={(value) => update("low_stock_alerts", value)}
+              />
+              <Toggle
+                checked={settings.order_alerts}
+                title="Orders waiting"
+                description="Preference for alerts when a purchase order needs attention."
+                disabled={saving}
+                onChange={(value) => update("order_alerts", value)}
+              />
+              <Toggle
+                checked={settings.weekly_summary}
+                title="Monday summary"
+                description="Preference for a weekly summary of recorded sales."
+                disabled={saving}
+                onChange={(value) => update("weekly_summary", value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Preferences are stored with your business settings. Email delivery is not configured.
+              </p>
+            </div>
+          </Panel>
+        </>
+      )}
     </form>
+  )
+}
+
+function Field({
+  id,
+  label,
+  value,
+  onChange,
+  type = "text",
+  className,
+  required = false,
+}: {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  type?: React.HTMLInputTypeAttribute
+  className?: string
+  required?: boolean
+}) {
+  return (
+    <div className={`flex flex-col gap-1.5 ${className ?? ""}`}>
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        required={required}
+      />
+    </div>
   )
 }
 
@@ -175,11 +243,13 @@ function Toggle({
   checked,
   title,
   description,
+  disabled,
   onChange,
 }: {
   checked: boolean
   title: string
   description: string
+  disabled: boolean
   onChange: (checked: boolean) => void
 }) {
   return (
@@ -187,6 +257,7 @@ function Toggle({
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
         className="mt-0.5 size-4 accent-foreground"
       />

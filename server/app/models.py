@@ -29,6 +29,39 @@ class User(db.Model):
     )
 
 
+class BusinessSettings(db.Model):
+    __tablename__ = "business_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_business_settings_singleton"),
+        CheckConstraint(
+            "default_min >= 0 AND default_min <= 2147483647",
+            name="ck_business_settings_default_min_range",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    name = db.Column(db.String(160), nullable=False, default="")
+    address = db.Column(db.Text, nullable=False, default="")
+    phone = db.Column(db.String(40), nullable=False, default="")
+    email = db.Column(db.String(255), nullable=False, default="")
+    currency = db.Column(
+        db.String(80),
+        nullable=False,
+        default="South African Rand (ZAR)",
+        server_default=text("'South African Rand (ZAR)'"),
+    )
+    default_min = db.Column(db.Integer, nullable=False, default=0)
+    low_stock_alerts = db.Column(db.Boolean, nullable=False, default=True)
+    order_alerts = db.Column(db.Boolean, nullable=False, default=True)
+    weekly_summary = db.Column(db.Boolean, nullable=False, default=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class OAuthIdentity(db.Model):
     __tablename__ = "oauth_identities"
     __table_args__ = (
@@ -324,47 +357,6 @@ class PurchaseOrderItem(db.Model):
     product = db.relationship("Product")
 
 
-class ShopSettings(db.Model):
-    __tablename__ = "shop_settings"
-    __table_args__ = (
-        CheckConstraint("id = 1", name="ck_shop_settings_singleton"),
-        CheckConstraint(
-            "default_reorder_level >= 0",
-            name="ck_shop_settings_default_reorder_nonnegative",
-        ),
-    )
-
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(160), nullable=False, default="", server_default=text("''"))
-    address = db.Column(db.Text)
-    phone = db.Column(db.String(40))
-    email = db.Column(db.String(255))
-    currency = db.Column(
-        db.String(80),
-        nullable=False,
-        default="South African Rand (ZAR)",
-        server_default=text("'South African Rand (ZAR)'"),
-    )
-    default_reorder_level = db.Column(
-        db.Integer, nullable=False, default=0, server_default=text("0")
-    )
-    low_stock_alerts = db.Column(
-        db.Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    order_emails = db.Column(
-        db.Boolean, nullable=False, default=True, server_default=text("1")
-    )
-    weekly_summary = db.Column(
-        db.Boolean, nullable=False, default=False, server_default=text("0")
-    )
-    updated_at = db.Column(
-        db.DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-
 class StockCount(db.Model):
     __tablename__ = "stock_counts"
     __table_args__ = (
@@ -388,11 +380,19 @@ class StockCount(db.Model):
     created_by_user_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     completed_at = db.Column(db.DateTime(timezone=True))
 
     owner = db.relationship("User", foreign_keys=[owner_user_id])
     created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    lines = db.relationship(
+        "StockCountLine",
+        back_populates="stock_count",
+        cascade="all, delete-orphan",
+        order_by="StockCountLine.id",
+    )
 
 
 class StockCountLine(db.Model):
@@ -425,7 +425,7 @@ class StockCountLine(db.Model):
     expected_quantity = db.Column(db.Integer, nullable=False)
     counted_quantity = db.Column(db.Integer)
 
-    stock_count = db.relationship("StockCount")
+    stock_count = db.relationship("StockCount", back_populates="lines")
     product = db.relationship("Product")
 
 
@@ -453,7 +453,9 @@ class StockRequest(db.Model):
     requester_user_id = db.Column(
         db.Integer, db.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     resolved_at = db.Column(db.DateTime(timezone=True))
 
     product = db.relationship("Product")

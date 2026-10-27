@@ -1,118 +1,113 @@
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from flask import request
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.api import api
-from app.api.helpers import (
-    MANAGER_ROLES,
-    json_object,
-    paginate_query,
-    parse_collection_args,
-    require_auth,
-    require_roles,
-)
+from app.api.auth import authenticated_user_from_request
+from app.api.validation import MAX_INTEGER, integer_value
 from app.extensions import db
-from app.models import Product, StockRequest
+from app.models import Product, StockMovement, StockRequest
 
 
-def serialize_request(item):
+MANAGER_ROLES = {"admin", "manager"}
+
+
+def _error(message, status=400):
+    return {"error": message}, status
+
+
+def _serialize(item):
     return {
         "id": item.id,
         "request_number": item.request_number,
         "product_id": item.product_id,
-        "sku": item.product.sku if item.product is not None else None,
-        "product": item.product.name if item.product is not None else None,
+        "sku": item.product.sku,
+        "product": item.product.name,
         "quantity": item.quantity,
         "note": item.note,
         "status": item.status,
         "requester_user_id": item.requester_user_id,
-        "requester": item.requester.name if item.requester is not None else None,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "resolved_at": (
-            item.resolved_at.isoformat() if item.resolved_at is not None else None
-        ),
+        "requester": item.requester.name,
+        "created_at": item.created_at.isoformat(),
+        "resolved_at": item.resolved_at.isoformat() if item.resolved_at else None,
     }
 
 
-@api.get("/stock-requests")
-@require_auth
-def list_stock_requests(user):
-    params, error = parse_collection_args(
-        allowed_sorts={"id", "created_at", "status"},
-        default_sort="created_at",
-        allowed_filters={"status", "mine"},
+def _authorized():
+    user = authenticated_user_from_request()
+    if user is None:
+        return None, _error("Authentication required", 401)
+    return user, None
+
+
+def _get_request(request_id, lock=False):
+    statement = (
+        select(StockRequest)
+        .options(
+            selectinload(StockRequest.product),
+            selectinload(StockRequest.requester),
+        )
+        .where(StockRequest.id == request_id)
     )
+    if lock:
+        statement = statement.with_for_update()
+    return db.session.scalar(statement)
+
+
+@api.get("/stock-requests")
+def list_stock_requests():
+    user, error = _authorized()
     if error:
         return error
-
-    query = StockRequest.query
-    filters = params["filters"]
-    if "status" in filters:
-        query = query.filter_by(status=filters["status"])
-    if filters.get("mine") == "true" or user.role not in MANAGER_ROLES:
-        query = query.filter_by(requester_user_id=user.id)
-
-    direction = params["direction"]
-    if params["sort"] == "created_at" and "direction" not in request.args:
-        direction = "desc"
-
-    result = paginate_query(
-        query,
-        StockRequest,
-        params["page"],
-        params["per_page"],
-        params["sort"],
-        direction,
-        {
-            "id": StockRequest.id,
-            "created_at": StockRequest.created_at,
-            "status": StockRequest.status,
-        },
+    statement = (
+        select(StockRequest)
+        .options(
+            selectinload(StockRequest.product),
+            selectinload(StockRequest.requester),
+        )
+        .order_by(StockRequest.created_at.desc(), StockRequest.id.desc())
+        .limit(100)
     )
-    return {
-        "items": [serialize_request(item) for item in result["items"]],
-        "pagination": result["pagination"],
-    }, 200
+    if user.role not in MANAGER_ROLES:
+        statement = statement.where(StockRequest.requester_user_id == user.id)
+    status = request.args.get("status")
+    if status:
+        if status not in {"pending", "approved", "declined", "fulfilled"}:
+            return _error("Invalid stock request status")
+        statement = statement.where(StockRequest.status == status)
+    rows = db.session.scalars(statement).all()
+    return {"stock_requests": [_serialize(row) for row in rows]}, 200
 
 
 @api.post("/stock-requests")
-@require_auth
-def create_stock_request(user):
-    payload, error = json_object(
-        {"request_number", "product_id", "quantity", "note"}
-    )
+def create_stock_request():
+    user, error = _authorized()
     if error:
         return error
-
-    request_number = payload["request_number"]
-    product_id = payload["product_id"]
-    quantity = payload["quantity"]
-    note = payload["note"]
-
-    if (
-        not isinstance(request_number, str)
-        or not request_number.strip()
-        or len(request_number.strip()) > 40
-    ):
-        return {"error": "request_number must contain 1 to 40 characters"}, 400
-    if (
-        isinstance(product_id, bool)
-        or not isinstance(product_id, int)
-        or product_id <= 0
-    ):
-        return {"error": "product_id must be a positive integer"}, 400
-    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
-        return {"error": "quantity must be a positive integer"}, 400
-    if not isinstance(note, str) or len(note) > 255:
-        return {"error": "note must be a string of at most 255 characters"}, 400
-
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) - {
+        "product_id",
+        "quantity",
+        "note",
+    }:
+        return _error("A JSON object with supported stock request fields is required")
+    try:
+        product_id = integer_value(payload.get("product_id"), "product_id", 1)
+        quantity = integer_value(payload.get("quantity"), "quantity", 1)
+    except ValueError as error:
+        return _error(str(error))
+    note = payload.get("note", "")
+    if not isinstance(note, str) or len(note.strip()) > 255:
+        return _error("note must be a string of at most 255 characters")
     product = db.session.get(Product, product_id)
     if product is None or not product.is_active:
-        return {"error": "product_id was not found"}, 400
-
+        return _error("Active product not found", 404)
     item = StockRequest(
-        request_number=request_number.strip(),
+        request_number=f"REQ-{uuid4().hex[:12].upper()}",
         product_id=product_id,
         quantity=quantity,
         note=note.strip(),
@@ -124,73 +119,101 @@ def create_stock_request(user):
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"error": "request_number already exists"}, 409
-    return serialize_request(item), 201
-
-
-@api.get("/stock-requests/<int:request_id>")
-@require_auth
-def get_stock_request(user, request_id):
-    item = db.session.get(StockRequest, request_id)
-    if item is None:
-        return {"error": "Stock request not found"}, 404
-    if user.role not in MANAGER_ROLES and item.requester_user_id != user.id:
-        return {"error": "Stock request not found"}, 404
-    return serialize_request(item), 200
+        return _error("Stock request could not be saved", 409)
+    return {"stock_request": _serialize(_get_request(item.id))}, 201
 
 
 @api.post("/stock-requests/<int:request_id>/approve")
-@require_roles(*MANAGER_ROLES)
-def approve_stock_request(user, request_id):
-    item = db.session.get(StockRequest, request_id)
+def approve_stock_request(request_id):
+    user, error = _authorized()
+    if error:
+        return error
+    if user.role not in MANAGER_ROLES:
+        return _error("Manager access required", 403)
+    item = _get_request(request_id, lock=True)
     if item is None:
-        return {"error": "Stock request not found"}, 404
+        return _error("Stock request not found", 404)
     if item.status != "pending":
-        return {"error": "Only pending requests can be approved"}, 409
+        return _error("Only pending requests can be approved", 409)
     item.status = "approved"
     item.resolved_at = datetime.now(timezone.utc)
     db.session.commit()
-    return serialize_request(item), 200
+    return {"stock_request": _serialize(_get_request(request_id))}, 200
 
 
 @api.post("/stock-requests/<int:request_id>/decline")
-@require_roles(*MANAGER_ROLES)
-def decline_stock_request(user, request_id):
-    item = db.session.get(StockRequest, request_id)
+def decline_stock_request(request_id):
+    user, error = _authorized()
+    if error:
+        return error
+    if user.role not in MANAGER_ROLES:
+        return _error("Manager access required", 403)
+    item = _get_request(request_id, lock=True)
     if item is None:
-        return {"error": "Stock request not found"}, 404
+        return _error("Stock request not found", 404)
     if item.status != "pending":
-        return {"error": "Only pending requests can be declined"}, 409
+        return _error("Only pending requests can be declined", 409)
     item.status = "declined"
     item.resolved_at = datetime.now(timezone.utc)
     db.session.commit()
-    return serialize_request(item), 200
+    return {"stock_request": _serialize(_get_request(request_id))}, 200
 
 
 @api.post("/stock-requests/<int:request_id>/fulfill")
-@require_roles(*MANAGER_ROLES)
-def fulfill_stock_request(user, request_id):
-    item = db.session.get(StockRequest, request_id)
+def fulfill_stock_request(request_id):
+    user, error = _authorized()
+    if error:
+        return error
+    if user.role not in MANAGER_ROLES | {"stock_controller"}:
+        return _error("Stock controller access required", 403)
+    item = _get_request(request_id, lock=True)
     if item is None:
-        return {"error": "Stock request not found"}, 404
+        return _error("Stock request not found", 404)
     if item.status != "approved":
-        return {"error": "Only approved requests can be fulfilled"}, 409
+        return _error("Only approved requests can be fulfilled", 409)
+    product = db.session.scalar(
+        select(Product)
+        .where(Product.id == item.product_id)
+        .with_for_update()
+    )
+    if product is None or not product.is_active:
+        return _error("Requested product is no longer active", 409)
+    if product.quantity + item.quantity > MAX_INTEGER:
+        return _error("Fulfilled quantity exceeds the supported stock range", 409)
+    product.quantity += item.quantity
     item.status = "fulfilled"
     item.resolved_at = datetime.now(timezone.utc)
-    db.session.commit()
-    return serialize_request(item), 200
+    db.session.add(
+        StockMovement(
+            product_id=product.id,
+            user_id=user.id,
+            movement_type="receipt",
+            quantity_change=item.quantity,
+            reason=f"Fulfilled stock request {item.request_number}",
+            reference_type="stock_request",
+            reference_id=item.id,
+        )
+    )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return _error("Stock request could not be fulfilled", 409)
+    return {"stock_request": _serialize(_get_request(request_id))}, 200
 
 
 @api.delete("/stock-requests/<int:request_id>")
-@require_auth
-def withdraw_stock_request(user, request_id):
-    item = db.session.get(StockRequest, request_id)
+def withdraw_stock_request(request_id):
+    user, error = _authorized()
+    if error:
+        return error
+    item = _get_request(request_id, lock=True)
     if item is None:
-        return {"error": "Stock request not found"}, 404
-    if item.requester_user_id != user.id and user.role not in MANAGER_ROLES:
-        return {"error": "Insufficient permissions"}, 403
+        return _error("Stock request not found", 404)
+    if user.role not in MANAGER_ROLES and item.requester_user_id != user.id:
+        return _error("Insufficient permissions", 403)
     if item.status != "pending":
-        return {"error": "Only pending requests can be withdrawn"}, 409
+        return _error("Only pending requests can be withdrawn", 409)
     db.session.delete(item)
     db.session.commit()
     return "", 204

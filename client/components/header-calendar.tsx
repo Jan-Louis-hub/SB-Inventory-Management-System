@@ -14,11 +14,8 @@ import {
 } from "@/components/ui/popover"
 import { money } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import {
-  getDeliveriesForRole,
-  ROLE_VIEW,
-  type DeliveryStatus,
-} from "@/lib/deliveries"
+import { ROLE_VIEW, type Delivery, type DeliveryStatus } from "@/lib/deliveries"
+import { listPurchaseOrders } from "@/lib/orders-api"
 import type { Role } from "@/lib/roles"
 
 const PRESETS = [
@@ -38,6 +35,8 @@ const STATUS_STYLES: Record<DeliveryStatus, string> = {
 
 export function HeaderCalendar({ role }: { role: Role }) {
   const view = ROLE_VIEW[role]
+  const [deliveries, setDeliveries] = React.useState<Delivery[]>([])
+  const [loadError, setLoadError] = React.useState("")
 
   // Start empty: reading the current time during render breaks prerendering.
   // The effect below fills these in once the component is in the browser.
@@ -48,16 +47,44 @@ export function HeaderCalendar({ role }: { role: Role }) {
   )
 
   React.useEffect(() => {
-    const now = new Date()
-    setDate(now)
-    setCurrentMonth(now)
-    setMounted(true)
+    const timer = window.setTimeout(() => {
+      const now = new Date()
+      setDate(now)
+      setCurrentMonth(now)
+      setMounted(true)
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
-  const deliveries = React.useMemo(
-    () => (mounted ? getDeliveriesForRole(role) : []),
-    [role, mounted]
-  )
+  React.useEffect(() => {
+    if (!mounted) return
+    const timer = window.setTimeout(() => {
+      void listPurchaseOrders()
+        .then((orders) => {
+          const orderDeliveries: Delivery[] = orders
+            .filter((order) => order.status !== "cancelled")
+            .map((order): Delivery => ({
+                id: order.purchase_number,
+                supplier: order.supplier,
+                items: order.items.map((item) => `${item.product_name} × ${item.quantity_ordered}`).join(", "),
+                date: new Date(order.expected_date ?? order.order_date),
+                status:
+                  order.status === "received"
+                    ? "received"
+                    : order.status === "partial"
+                      ? "arrived"
+                      : "scheduled",
+                ...(view.showValue ? { value: Number(order.total_amount) } : {}),
+              }))
+          setDeliveries(orderDeliveries.filter((delivery) => view.statuses.includes(delivery.status)))
+          setLoadError("")
+        })
+        .catch((error: unknown) =>
+          setLoadError(error instanceof Error ? error.message : "Could not load deliveries")
+        )
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [mounted, role, view])
 
   const deliveryDates = deliveries.map((d) => d.date)
   const selectedDeliveries = date
@@ -128,7 +155,7 @@ export function HeaderCalendar({ role }: { role: Role }) {
 
           <div className="scroll-subtle max-h-[max(15svh,6rem)] overflow-y-auto pr-1">
             {selectedDeliveries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No deliveries.</p>
+              <p className="text-sm text-muted-foreground">{loadError || "No deliveries."}</p>
             ) : (
               <ul className="flex flex-col gap-3">
                 {selectedDeliveries.map((d) => (

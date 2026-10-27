@@ -38,24 +38,23 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-## 2. Create demo login accounts
+## 2. Initialize the database and create the first manager
 
-From `server`, create the manager and stock-controller accounts:
+Configure PostgreSQL in `server/.env`, then apply migrations from `server`:
 
 ```powershell
-python -m flask --app main seed-demo-accounts
+python -m flask --app main db upgrade
 ```
 
-Use these credentials to sign in through the frontend:
+Create the initial manager account with your own credentials:
 
-| Role       | Email                          | Password             |
-| ---------- | ------------------------------ | -------------------- |
-| Manager    | `manager@demo.example.test`    | `ManagerDemo123!`    |
-| Controller | `controller@demo.example.test` | `ControllerDemo123!` |
+```powershell
+python -m flask --app main create-manager --email you@example.com
+```
 
-These are development-only demo credentials. The command refuses to run in
-production, and it does not overwrite an existing account if its credentials
-or role differ. Do not use these passwords for real accounts.
+The command prompts for your name and password. It only creates the first
+manager and refuses to run once a manager account exists. No sample inventory
+or demo accounts are created.
 
 ## 3. Start the backend
 

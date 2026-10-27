@@ -1,155 +1,94 @@
-from decimal import Decimal, InvalidOperation
-from uuid import UUID
+from decimal import Decimal
+from uuid import UUID, uuid4
 
-from sqlalchemy.exc import IntegrityError
+from flask import request
+from sqlalchemy import select
 
 from app.api import api
-from app.api.helpers import (
-    STOCK_ROLES,
-    inventory_error_response,
-    json_object,
-    money_value,
-    paginate_query,
-    parse_collection_args,
-    require_auth,
-    require_roles,
-)
+from app.api.auth import authenticated_user_from_request
 from app.extensions import db
 from app.models import Sale, SaleItem
 from app.services.inventory import InventoryOperationError, create_sale
 
 
-def serialize_sale(sale, include_items=False):
-    payload = {
+def _error(message, status=400):
+    return {"error": message}, status
+
+
+def _serialize(sale):
+    items = db.session.scalars(
+        select(SaleItem).where(SaleItem.sale_id == sale.id).order_by(SaleItem.id)
+    ).all()
+    return {
         "id": sale.id,
         "sale_number": sale.sale_number,
-        "user_id": sale.user_id,
         "status": sale.status,
-        "subtotal": money_value(sale.subtotal),
-        "discount_amount": money_value(sale.discount_amount),
-        "tax_amount": money_value(sale.tax_amount),
-        "total_amount": money_value(sale.total_amount),
-        "sold_at": sale.sold_at.isoformat() if sale.sold_at is not None else None,
-        "idempotency_key": (
-            str(sale.idempotency_key) if sale.idempotency_key is not None else None
-        ),
-    }
-    if include_items:
-        items = (
-            SaleItem.query.filter_by(sale_id=sale.id).order_by(SaleItem.id).all()
-        )
-        payload["items"] = [
+        "subtotal": format(sale.subtotal, ".2f"),
+        "discount_amount": format(sale.discount_amount, ".2f"),
+        "tax_amount": format(sale.tax_amount, ".2f"),
+        "total_amount": format(sale.total_amount, ".2f"),
+        "sold_at": sale.sold_at.isoformat(),
+        "items": [
             {
-                "id": item.id,
                 "product_id": item.product_id,
-                "product": item.product.name if item.product is not None else None,
-                "sku": item.product.sku if item.product is not None else None,
+                "product_name": item.product.name,
+                "sku": item.product.sku,
                 "quantity": item.quantity,
-                "unit_price": money_value(item.unit_price),
-                "unit_cost": money_value(item.unit_cost),
-                "line_total": money_value(item.line_total),
+                "unit_price": format(item.unit_price, ".2f"),
+                "line_total": format(item.line_total, ".2f"),
             }
             for item in items
-        ]
-    return payload
+        ],
+    }
 
 
 @api.get("/sales")
-@require_roles(*STOCK_ROLES)
-def list_sales(user):
-    params, error = parse_collection_args(
-        allowed_sorts={"sold_at", "id", "sale_number"},
-        default_sort="sold_at",
-        allowed_filters={"status"},
-    )
-    if error:
-        return error
-
-    query = Sale.query
-    if "status" in params["filters"]:
-        query = query.filter_by(status=params["filters"]["status"])
-
-    result = paginate_query(
-        query,
-        Sale,
-        params["page"],
-        params["per_page"],
-        params["sort"],
-        params["direction"],
-        {
-            "sold_at": Sale.sold_at,
-            "id": Sale.id,
-            "sale_number": Sale.sale_number,
-        },
-    )
-    return {
-        "items": [serialize_sale(item) for item in result["items"]],
-        "pagination": result["pagination"],
-    }, 200
+def list_sales():
+    if authenticated_user_from_request() is None:
+        return _error("Authentication required", 401)
+    sales = db.session.scalars(
+        select(Sale).order_by(Sale.sold_at.desc(), Sale.id.desc()).limit(100)
+    ).all()
+    return {"sales": [_serialize(sale) for sale in sales]}, 200
 
 
 @api.post("/sales")
-@require_roles(*STOCK_ROLES)
-def create_sale_route(user):
-    payload, error = json_object(
-        {
-            "sale_number",
-            "items",
-            "discount_amount",
-            "tax_rate",
-            "idempotency_key",
-        }
-    )
-    if error:
-        return error
-
-    items = payload["items"]
-    if not isinstance(items, list) or not items:
-        return {"error": "items must contain at least one product"}, 400
-    prepared = []
+def record_sale():
+    user = authenticated_user_from_request()
+    if user is None:
+        return _error("Authentication required", 401)
+    if user.role not in {"admin", "manager", "cashier"}:
+        return _error("Sales access required", 403)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) - {
+        "items",
+        "discount_amount",
+        "tax_rate",
+        "idempotency_key",
+    }:
+        return _error("A JSON object with supported sale fields is required")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return _error("items must be a list")
+    normalized_items = []
     for item in items:
         if not isinstance(item, dict) or set(item) != {"product_id", "quantity"}:
-            return {
-                "error": "each item must contain product_id and quantity only"
-            }, 400
-        prepared.append((item["product_id"], item["quantity"]))
-
-    idempotency_key = payload["idempotency_key"]
-    if idempotency_key is not None:
-        if not isinstance(idempotency_key, str):
-            return {"error": "idempotency_key must be a UUID string or null"}, 400
-        try:
-            idempotency_key = UUID(idempotency_key)
-        except ValueError:
-            return {"error": "idempotency_key must be a UUID string or null"}, 400
-
+            return _error("Each sale item requires product_id and quantity")
+        normalized_items.append((item["product_id"], item["quantity"]))
     try:
+        idempotency_key = payload.get("idempotency_key")
+        if idempotency_key is not None:
+            idempotency_key = UUID(idempotency_key)
         sale = create_sale(
-            sale_number=payload["sale_number"],
+            sale_number=f"SALE-{uuid4().hex[:12].upper()}",
             user_id=user.id,
-            items=prepared,
-            discount_amount=Decimal(str(payload["discount_amount"])),
-            tax_rate=Decimal(str(payload["tax_rate"])),
+            items=normalized_items,
+            discount_amount=payload.get("discount_amount", Decimal("0.00")),
+            tax_rate=payload.get("tax_rate", Decimal("0.00")),
             idempotency_key=idempotency_key,
         )
         db.session.commit()
-    except InventoryOperationError as exc:
+    except (InventoryOperationError, ValueError, TypeError, AttributeError) as error:
         db.session.rollback()
-        return inventory_error_response(exc)
-    except (InvalidOperation, TypeError, ValueError):
-        db.session.rollback()
-        return {"error": "discount_amount and tax_rate must be valid numbers"}, 400
-    except IntegrityError:
-        db.session.rollback()
-        return {"error": "sale_number or idempotency_key already exists"}, 409
-
-    return serialize_sale(sale, include_items=True), 201
-
-
-@api.get("/sales/<int:sale_id>")
-@require_roles(*STOCK_ROLES)
-def get_sale(user, sale_id):
-    sale = db.session.get(Sale, sale_id)
-    if sale is None:
-        return {"error": "Sale not found"}, 404
-    return serialize_sale(sale, include_items=True), 200
+        return _error(str(error), 409)
+    return {"sale": _serialize(sale)}, 201

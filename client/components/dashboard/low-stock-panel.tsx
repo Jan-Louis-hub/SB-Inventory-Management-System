@@ -29,8 +29,13 @@ export function LowStockPanel({
       className={className}
     >
       <ul className="divide-y">
-        {items.map((item) => {
-          const pct = Math.round((item.current / item.min) * 100)
+        {items.length === 0 ? (
+          <li className="p-4 text-sm text-muted-foreground">No products currently need restocking.</li>
+        ) : items.map((item) => {
+          const pct =
+            item.min === 0
+              ? item.current === 0 ? 0 : 100
+              : Math.round((item.current / item.min) * 100)
           const critical = pct < 50
           return (
             <li key={item.sku} className="flex flex-col gap-2 px-4 py-3">

@@ -21,6 +21,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { title: "Inventory", href: "/manager/inventory", icon: Package },
     { title: "Suppliers", href: "/manager/suppliers", icon: Truck },
     { title: "Orders", href: "/manager/orders", icon: ShoppingCart },
+    { title: "Requests", href: "/manager/requests", icon: Inbox },
     { title: "Reports", href: "/manager/reports", icon: BarChart3 },
     { title: "Staff", href: "/manager/staff", icon: Users },
   ],

@@ -13,16 +13,13 @@ import { Panel } from "@/components/panel"
 import { StockFlowChart } from "@/components/stock-flow-chart"
 import { Button } from "@/components/ui/button"
 import { useSearchQuery } from "@/hooks/use-search-query"
-import { allMovements, type StockMovement } from "@/lib/activity"
+import { listInventory, listStockMovements, type StockMovementRecord } from "@/lib/inventory-api"
+import { listSales, recordSale, type SaleRecord } from "@/lib/sales-api"
+import { getLevel } from "@/lib/inventory"
 import { money } from "@/lib/format"
-import {
-  getCategoryBreakdown,
-  getInventorySnapshot,
-  getProductsForRole,
-} from "@/lib/inventory"
-import { SHOP } from "@/lib/shop"
 
 type MoveFilter = "all" | "IN" | "OUT"
+type ProductRow = Awaited<ReturnType<typeof listInventory>>["products"][number]
 
 function csvCell(value: string | number) {
   return `"${String(value).replace(/"/g, '""')}"`
@@ -30,219 +27,197 @@ function csvCell(value: string | number) {
 
 export function ReportsView() {
   const q = useSearchQuery()
-  const snap = React.useMemo(() => getInventorySnapshot(), [])
-  const categories = React.useMemo(() => getCategoryBreakdown(), [])
-  const movements = React.useMemo(() => allMovements(), [])
+  const [products, setProducts] = React.useState<ProductRow[]>([])
+  const [movements, setMovements] = React.useState<StockMovementRecord[]>([])
+  const [sales, setSales] = React.useState<SaleRecord[]>([])
+  const [saleForm, setSaleForm] = React.useState({ product_id: "", quantity: "1" })
+  const [savingSale, setSavingSale] = React.useState(false)
   const [move, setMove] = React.useState<MoveFilter>("all")
+  const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState("")
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void Promise.all([listInventory(), listStockMovements(), listSales()])
+        .then(([inventory, stockMovements, salesRows]) => {
+          setProducts(inventory.products)
+          setMovements(stockMovements)
+          setSales(salesRows)
+          setError("")
+        })
+        .catch((caught: unknown) =>
+          setError(caught instanceof Error ? caught.message : "Could not load reports")
+        )
+        .finally(() => setLoading(false))
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const units = products.reduce((sum, product) => sum + product.stock, 0)
+  const value = products.reduce((sum, product) => sum + product.stock * (product.cost ?? 0), 0)
+  const belowMinimum = products.filter((product) => getLevel(product) !== "in_stock").length
   const stats: Kpi[] = [
-    {
-      title: "Stock value",
-      value: money.format(snap.value),
-      note: "At unit cost",
-      tone: "neutral",
-      icon: Wallet,
-    },
-    {
-      title: "Units on hand",
-      value: String(snap.units),
-      note: `${snap.products} styles`,
-      tone: "neutral",
-      icon: Package,
-    },
-    {
-      title: "Below minimum",
-      value: String(snap.belowMin),
-      note: `${snap.out} out of stock`,
-      tone: snap.belowMin > 0 ? "bad" : "good",
-      icon: AlertTriangle,
-      alert: snap.belowMin > 0,
-    },
-    {
-      title: "Ledger lines",
-      value: String(movements.length),
-      note: "Latest floor adjustments",
-      tone: "neutral",
-      icon: ArrowLeftRight,
-    },
+    { title: "Stock value", value: money.format(value), note: "At unit cost", tone: "neutral", icon: Wallet },
+    { title: "Units on hand", value: String(units), note: `${products.length} active products`, tone: "neutral", icon: Package },
+    { title: "Below minimum", value: String(belowMinimum), note: "Requires restocking", tone: belowMinimum ? "bad" : "good", icon: AlertTriangle, alert: belowMinimum > 0 },
+    { title: "Ledger lines", value: String(movements.length), note: "Recorded stock movements", tone: "neutral", icon: ArrowLeftRight },
   ]
 
-  const ledger = movements.filter((entry) => {
-    if (move !== "all" && entry.type !== move) return false
-    if (!q) return true
-    return [entry.product, entry.sku, entry.user, entry.type, entry.time].some(
-      (value) => value.toLowerCase().includes(q)
-    )
-  })
+  const categoryRows = [...products.reduce((groups, product) => {
+    const row = groups.get(product.category) ?? { category: product.category, styles: 0, units: 0, value: 0, belowMin: 0 }
+    row.styles += 1
+    row.units += product.stock
+    row.value += product.stock * (product.cost ?? 0)
+    if (getLevel(product) !== "in_stock") row.belowMin += 1
+    groups.set(product.category, row)
+    return groups
+  }, new Map<string, { category: string; styles: number; units: number; value: number; belowMin: number }>()).values()]
+    .sort((a, b) => b.value - a.value)
 
+  const ledger = movements.filter((entry) => {
+    const type = entry.quantity_change > 0 ? "IN" : "OUT"
+    if (move !== "all" && type !== move) return false
+    return !q || [entry.product_name, entry.actor ?? "", entry.reason, String(entry.product_id), type]
+      .some((value) => value.toLowerCase().includes(q))
+  })
   const pagination = usePagination(ledger, { resetKey: `${q}|${move}` })
 
+  async function submitSale(event: React.FormEvent) {
+    event.preventDefault()
+    setSavingSale(true)
+    setError("")
+    try {
+      await recordSale({
+        items: [{ product_id: Number(saleForm.product_id), quantity: Number(saleForm.quantity) }],
+      })
+      setSaleForm({ product_id: "", quantity: "1" })
+      const [inventory, stockMovements, salesRows] = await Promise.all([
+        listInventory(),
+        listStockMovements(),
+        listSales(),
+      ])
+      setProducts(inventory.products)
+      setMovements(stockMovements)
+      setSales(salesRows)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not record sale")
+    } finally {
+      setSavingSale(false)
+    }
+  }
+
   function exportCsv() {
-    const products = getProductsForRole("inventory_manager")
-    const header = [
-      "SKU",
-      "Product",
-      "Category",
-      "Location",
-      "Supplier",
-      "Stock",
-      "Minimum",
-      "Unit cost (ZAR)",
-      "Stock value (ZAR)",
-    ]
+    const header = ["SKU", "Product", "Category", "Stock", "Reorder level", "Unit cost", "Stock value"]
     const body = products.map((product) => [
       product.sku,
       product.name,
       product.category,
-      product.location,
-      product.supplier,
       product.stock,
       product.min,
       product.cost ?? 0,
       (product.cost ?? 0) * product.stock,
     ])
-    const csv = [header, ...body]
-      .map((row) => row.map(csvCell).join(","))
-      .join("\n")
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
+    const csv = [header, ...body].map((row) => row.map(csvCell).join(",")).join("\n")
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }))
     const link = document.createElement("a")
     link.href = url
-    link.download = "harbour-lane-stock.csv"
+    link.download = "inventory-stock.csv"
     link.click()
     URL.revokeObjectURL(url)
   }
 
-  const columns: Column<StockMovement>[] = [
-    {
-      key: "when",
-      header: "When",
-      cell: (entry) => (
-        <span className="text-sm text-muted-foreground">{entry.time}</span>
-      ),
-    },
+  const columns: Column<StockMovementRecord>[] = [
+    { key: "when", header: "When", cell: (entry) => <span className="text-sm text-muted-foreground">{new Date(entry.created_at).toLocaleString()}</span> },
     {
       key: "product",
       header: "Product",
-      cell: (entry) => (
-        <div className="flex min-w-0 flex-col">
-          <span className="truncate text-sm font-medium">{entry.product}</span>
-          <span className="font-mono text-xs text-muted-foreground">
-            {entry.sku}
-          </span>
-        </div>
-      ),
+      cell: (entry) => <div className="flex min-w-0 flex-col"><span className="truncate text-sm font-medium">{entry.product_name}</span><span className="font-mono text-xs text-muted-foreground">Product ID {entry.product_id}</span></div>,
     },
     {
       key: "type",
       header: "Movement",
-      cell: (entry) => (
-        <StatusBadge tone={entry.type === "IN" ? "success" : "warning"}>
-          {entry.type === "IN" ? "Stock in" : "Stock out"}
-        </StatusBadge>
-      ),
+      cell: (entry) => <StatusBadge tone={entry.quantity_change > 0 ? "success" : "warning"}>{entry.movement_type.replace("_", " ")}</StatusBadge>,
     },
-    {
-      key: "qty",
-      header: "Qty",
-      align: "right",
-      cell: (entry) => (
-        <span className="text-sm font-medium tabular-nums">{entry.qty}</span>
-      ),
-    },
-    {
-      key: "user",
-      header: "Recorded by",
-      cell: (entry) => <span className="text-sm">{entry.user}</span>,
-    },
+    { key: "qty", header: "Qty", align: "right", cell: (entry) => <span className="text-sm font-medium tabular-nums">{entry.quantity_change > 0 ? "+" : ""}{entry.quantity_change}</span> },
+    { key: "user", header: "Recorded by", cell: (entry) => <span className="text-sm">{entry.actor || "Unknown"}</span> },
+    { key: "reason", header: "Reason", cell: (entry) => <span className="text-sm">{entry.reason}</span> },
   ]
 
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Reports"
-        description={`Stock value, category mix and the movement ledger for ${SHOP.name}.`}
-        actions={
-          <Button className="rounded-sm" onClick={exportCsv}>
-            <Download /> Export CSV
-          </Button>
-        }
+        description="Live inventory valuation, category totals and the recorded movement ledger."
+        actions={<Button className="rounded-sm" onClick={exportCsv} disabled={loading || products.length === 0}><Download /> Export CSV</Button>}
       />
-
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <KpiStrip items={stats} />
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <StockFlowChart className="lg:col-span-2" />
-        <Panel
-          title="Value by category"
-          description="At unit cost, highest first"
-        >
-          <ul className="divide-y">
-            {categories.map((row) => (
-              <li
-                key={row.category}
-                className="flex items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{row.category}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {row.styles} styles · {row.units} units
-                    {row.belowMin > 0 ? ` · ${row.belowMin} below min` : ""}
-                  </p>
-                </div>
-                <span className="text-sm font-medium tabular-nums">
-                  {money.format(row.value)}
-                </span>
-              </li>
-            ))}
-          </ul>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <form onSubmit={submitSale} className="flex flex-col gap-3 rounded-sm border bg-card p-4">
+          <h3 className="text-sm font-semibold">Record a sale</h3>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Product
+            <select required value={saleForm.product_id} onChange={(event) => setSaleForm({ ...saleForm, product_id: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground">
+              <option value="">Select product</option>
+              {products.map((product) => <option key={product.id} value={product.id}>{product.sku} · {product.name} ({product.stock} in stock)</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            Quantity
+            <input required min="1" type="number" value={saleForm.quantity} onChange={(event) => setSaleForm({ ...saleForm, quantity: event.target.value })} className="h-9 rounded-sm border bg-background px-2 text-sm text-foreground" />
+          </label>
+          <Button type="submit" disabled={savingSale || !products.length} className="self-start rounded-sm">{savingSale ? "Recording…" : "Record sale"}</Button>
+        </form>
+        <Panel title="Recent sales" description="Completed transactions saved to the database">
+          {sales.length ? (
+            <ul className="divide-y">
+              {sales.slice(0, 5).map((sale) => (
+                <li key={sale.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs font-medium">{sale.sale_number}</p>
+                    <p className="truncate text-xs text-muted-foreground">{sale.items.map((item) => `${item.product_name} × ${item.quantity}`).join(", ")}</p>
+                  </div>
+                  <span className="text-sm font-medium tabular-nums">{money.format(Number(sale.total_amount))}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="p-4 text-sm text-muted-foreground">{loading ? "Loading sales…" : "No sales recorded yet."}</p>}
         </Panel>
       </div>
-
+      <div className="grid gap-4 lg:grid-cols-3">
+        <StockFlowChart className="lg:col-span-2" />
+        <Panel title="Value by category" description="At current unit cost, highest first">
+          {categoryRows.length ? (
+            <ul className="divide-y">
+              {categoryRows.map((row) => (
+                <li key={row.category} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{row.category}</p>
+                    <p className="text-xs text-muted-foreground">{row.styles} products · {row.units} units{row.belowMin ? ` · ${row.belowMin} below min` : ""}</p>
+                  </div>
+                  <span className="text-sm font-medium tabular-nums">{money.format(row.value)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="p-4 text-sm text-muted-foreground">{loading ? "Loading category totals…" : "No inventory to summarize yet."}</p>}
+        </Panel>
+      </div>
       <div id="audit" className="flex scroll-mt-6 flex-col gap-3">
         <div>
           <h3 className="text-sm font-semibold">Movement ledger</h3>
-          <p className="text-xs text-muted-foreground">
-            Stock in and out recorded on the floor.
-          </p>
+          <p className="text-xs text-muted-foreground">Stock transactions recorded in the database.</p>
         </div>
-
-        <FilterChips
-          value={move}
-          onChange={setMove}
-          options={[
-            { value: "all", label: "All", count: movements.length },
-            {
-              value: "IN",
-              label: "Stock in",
-              count: movements.filter((entry) => entry.type === "IN").length,
-            },
-            {
-              value: "OUT",
-              label: "Stock out",
-              count: movements.filter((entry) => entry.type === "OUT").length,
-            },
-          ]}
-        />
-
+        <FilterChips value={move} onChange={setMove} options={[
+          { value: "all", label: "All", count: movements.length },
+          { value: "IN", label: "Stock in", count: movements.filter((entry) => entry.quantity_change > 0).length },
+          { value: "OUT", label: "Stock out", count: movements.filter((entry) => entry.quantity_change < 0).length },
+        ]} />
         <DataTable
           columns={columns}
-          rows={pagination.pageItems}
+          rows={loading ? [] : pagination.pageItems}
           rowKey={(entry) => String(entry.id)}
-          empty={
-            <EmptyState
-              icon={ArrowLeftRight}
-              title="No movements found"
-              description="Try another filter or search."
-            />
-          }
-          footer={
-            <TablePagination
-              pagination={pagination}
-              noun="entries"
-              note={q ? `Search: “${q}”` : undefined}
-            />
-          }
+          empty={<EmptyState icon={ArrowLeftRight} title={loading ? "Loading movements…" : error ? "Movement history unavailable" : "No stock movements yet"} description={loading ? "Loading the inventory ledger." : error ? "Check backend availability and try again." : "Real stock adjustments and receipts will appear here."} />}
+          footer={!loading && ledger.length ? <TablePagination pagination={pagination} noun="entries" note={q ? `Search: “${q}”` : undefined} /> : undefined}
         />
       </div>
     </div>

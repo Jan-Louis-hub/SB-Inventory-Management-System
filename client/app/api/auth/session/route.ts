@@ -3,21 +3,11 @@ import { NextResponse } from "next/server"
 import {
   clearSessionCookie,
   getBackendUrl,
-  getMockUserFromSessionToken,
-  isMockAuthEnabled,
   readSessionToken,
 } from "@/lib/auth-proxy"
 
 export async function GET() {
   const token = await readSessionToken()
-  if (isMockAuthEnabled()) {
-    const user = getMockUserFromSessionToken(token)
-    if (!user) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 })
-    }
-    return NextResponse.json({ user })
-  }
-
   if (!token) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 })
   }

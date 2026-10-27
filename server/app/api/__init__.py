@@ -2,19 +2,13 @@ from flask import Blueprint
 
 api = Blueprint("api", __name__)
 
-from app.api import (  # noqa: E402,F401
+from app.api import (
     auth,
     categories,
-    deliveries,
     products,
-    purchase_orders,
-    sales,
-    shop,
     stock_counts,
     stock_movements,
     stock_requests,
-    suppliers,
-    users,
 )
 
 

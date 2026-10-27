@@ -96,15 +96,6 @@ database. Check the applied version and the available migration head with:
 .\venv\Scripts\python.exe -m flask --app main db heads
 ```
 
-To add optional clothing-shop demo data to a development or testing database:
-
-```powershell
-.\venv\Scripts\python.exe -m flask --app main seed-demo
-```
-
-The demo seed is idempotent and is disabled in production. Do not seed demo
-data into a database containing real business records.
-
 ### If the database already has tables
 
 Do **not** run `db upgrade` blindly against tables created earlier with
@@ -149,7 +140,7 @@ exercise your live PostgreSQL server. From `server`:
 ```
 
 The tests cover environment-specific configuration, clean migrations,
-upgrading from the initial revision, constraints, demo-data isolation,
+upgrading from the initial revision, constraints, test-fixture data isolation,
 transactional sales, stock receipts, and rollback on invalid operations.
 Authentication endpoint tests also cover password hashing, duplicate
 registration, staff-only self-registration, login, and bearer-token profile
@@ -192,6 +183,20 @@ then apply it to a development database:
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
+
+DEMO_ACCOUNTS = (
+    {
+        "name": "Demo Manager",
+        "email": "manager@demo.example.test",
+        "password": "ManagerDemo123!",
+        "role": "manager",
+    },
+    {
+        "name": "Demo Controller",
+        "email": "controller@demo.example.test",
+        "password": "ControllerDemo123!",
+        "role": "stock_controller",
+    },
 Review generated migrations for data conversions, constraint changes, and
 indexes. Test upgrades on a separate database or a restored backup before
 deploying to production. Store database dumps outside the repository, restrict

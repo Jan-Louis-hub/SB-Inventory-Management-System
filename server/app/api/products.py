@@ -1,388 +1,384 @@
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from flask import request
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from app.api import api
-from app.api.helpers import (
-    MANAGER_ROLES,
-    STOCK_ROLES,
-    inventory_error_response,
-    json_object,
-    json_object_subset,
-    money_value,
-    paginate_query,
-    parse_collection_args,
-    require_auth,
-    require_roles,
-)
+from app.api.auth import authenticated_user_from_request
+from app.api.validation import integer_value
 from app.extensions import db
-from app.models import Category, Product, Supplier
-from app.services.inventory import InventoryOperationError, adjust_product_stock
+from app.models import Category, Product, StockMovement, Supplier
 
 
-def _can_see_cost(user):
-    return user.role in MANAGER_ROLES
+PRODUCT_FIELDS = {
+    "sku",
+    "name",
+    "description",
+    "category_id",
+    "supplier_id",
+    "location",
+    "unit",
+    "cost_price",
+    "selling_price",
+    "quantity",
+    "reorder_level",
+    "is_active",
+}
+EDITABLE_FIELDS = PRODUCT_FIELDS - {"quantity"}
+SORT_FIELDS = {
+    "sku": Product.sku,
+    "name": Product.name,
+    "quantity": Product.quantity,
+    "cost_price": Product.cost_price,
+    "selling_price": Product.selling_price,
+    "reorder_level": Product.reorder_level,
+    "location": Product.location,
+    "created_at": Product.created_at,
+    "updated_at": Product.updated_at,
+}
 
 
-def serialize_product(product, user):
-    payload = {
+def _error(message, status=400):
+    return {"error": message}, status
+
+
+def _json_object():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _money(value, field):
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as error:
+        raise ValueError(f"{field} must be a valid non-negative amount") from error
+    if not amount.is_finite() or amount < 0:
+        raise ValueError(f"{field} must be a valid non-negative amount")
+    try:
+        normalized = amount.quantize(Decimal("0.01"))
+    except InvalidOperation as error:
+        raise ValueError(f"{field} is outside the supported range") from error
+    if normalized != amount or normalized > Decimal("9999999999.99"):
+        raise ValueError(f"{field} must have at most 2 decimal places and fit the supported range")
+    return normalized
+
+
+def serialize_product(product):
+    return {
         "id": product.id,
         "sku": product.sku,
         "name": product.name,
         "description": product.description,
         "category_id": product.category_id,
-        "category": product.category.name if product.category is not None else None,
         "supplier_id": product.supplier_id,
-        "supplier": product.supplier.name if product.supplier is not None else None,
+        "category": (
+            {"id": product.category.id, "name": product.category.name}
+            if product.category
+            else None
+        ),
+        "cost_price": format(product.cost_price, ".2f"),
+        "selling_price": format(product.selling_price, ".2f"),
+        "quantity": product.quantity,
         "location": product.location,
         "unit": product.unit,
-        "selling_price": money_value(product.selling_price),
-        "quantity": product.quantity,
         "reorder_level": product.reorder_level,
         "is_active": product.is_active,
+        "created_at": product.created_at.isoformat(),
+        "updated_at": product.updated_at.isoformat(),
     }
-    if _can_see_cost(user):
-        payload["cost_price"] = money_value(product.cost_price)
-    return payload
 
 
-def _parse_money(value, field):
+def _pagination():
     try:
-        amount = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        return None, f"{field} must be a valid amount"
-    if not amount.is_finite() or amount < 0:
-        return None, f"{field} must be non-negative"
-    return amount.quantize(Decimal("0.01")), None
+        page = integer_value(request.args.get("page", "1"), "page", 1)
+        per_page = integer_value(request.args.get("per_page", "20"), "per_page", 1)
+    except ValueError as error:
+        return None, str(error)
+    if per_page > 100:
+        return None, "per_page cannot exceed 100"
+    return (page, per_page), None
+
+
+def _authorized_user():
+    user = authenticated_user_from_request()
+    if user is None:
+        return None, _error("Authentication required", 401)
+    return user, None
 
 
 @api.get("/products")
-@require_auth
-def list_products(user):
-    params, error = parse_collection_args(
-        allowed_sorts={"name", "sku", "quantity", "id"},
-        default_sort="name",
-        allowed_filters={"category_id", "location", "supplier_id", "is_active", "q"},
-    )
+def list_products():
+    pagination, error = _pagination()
     if error:
-        return error
+        return _error(error)
+    page, per_page = pagination # type: ignore
 
-    query = Product.query
-    filters = params["filters"]
-    if "category_id" in filters:
+    statement = select(Product).options(selectinload(Product.category)) # type: ignore
+    search = request.args.get("search", request.args.get("q", "")).strip()
+    if search:
+        pattern = f"%{search}%"
+        statement = statement.where(
+            or_(Product.name.ilike(pattern), Product.sku.ilike(pattern))
+        )
+
+    category_id = request.args.get("category_id")
+    if category_id is not None:
         try:
-            category_id = int(filters["category_id"])
-        except (TypeError, ValueError):
-            return {"error": "category_id must be an integer"}, 400
-        query = query.filter_by(category_id=category_id)
-    if "supplier_id" in filters:
-        try:
-            supplier_id = int(filters["supplier_id"])
-        except (TypeError, ValueError):
-            return {"error": "supplier_id must be an integer"}, 400
-        query = query.filter_by(supplier_id=supplier_id)
-    if "location" in filters:
-        query = query.filter(Product.location == filters["location"])
-    if "is_active" in filters:
-        if filters["is_active"] not in {"true", "false"}:
-            return {"error": "is_active must be true or false"}, 400
-        query = query.filter_by(is_active=filters["is_active"] == "true")
-    if "q" in filters:
-        term = filters["q"].strip()
-        if term:
-            pattern = f"%{term}%"
-            query = query.filter(
-                (Product.name.ilike(pattern)) | (Product.sku.ilike(pattern))
+            statement = statement.where(
+                Product.category_id == integer_value(category_id, "category_id", 1)
             )
+        except ValueError as error:
+            return _error(str(error))
 
-    result = paginate_query(
-        query,
-        Product,
-        params["page"],
-        params["per_page"],
-        params["sort"],
-        params["direction"],
-        {
-            "name": Product.name,
-            "sku": Product.sku,
-            "quantity": Product.quantity,
-            "id": Product.id,
-        },
+    active = request.args.get("is_active")
+    if active is not None:
+        if active.lower() not in {"true", "false"}:
+            return _error("is_active must be true or false")
+        statement = statement.where(Product.is_active.is_(active.lower() == "true"))
+
+    low_stock = request.args.get("low_stock")
+    if low_stock is not None:
+        if low_stock.lower() not in {"true", "false"}:
+            return _error("low_stock must be true or false")
+        if low_stock.lower() == "true":
+            statement = statement.where(Product.quantity <= Product.reorder_level)
+        else:
+            statement = statement.where(Product.quantity > Product.reorder_level)
+
+    sort_by = request.args.get("sort_by", "name")
+    sort_column = SORT_FIELDS.get(sort_by)
+    if sort_column is None:
+        return _error(f"sort_by must be one of: {', '.join(SORT_FIELDS)}")
+    order = request.args.get("order", "asc").lower()
+    if order not in {"asc", "desc"}:
+        return _error("order must be asc or desc")
+    statement = statement.order_by(
+        sort_column.desc() if order == "desc" else sort_column.asc(),
+        Product.id.asc(),
     )
+
+    count_statement = select(func.count()).select_from(statement.order_by(None).subquery())
+    total = db.session.scalar(count_statement)
+    products = db.session.scalars(
+        statement.offset((page - 1) * per_page).limit(per_page)
+    ).all()
     return {
-        "items": [serialize_product(item, user) for item in result["items"]],
-        "pagination": result["pagination"],
+        "products": [serialize_product(product) for product in products],
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page, # type: ignore
+        },
     }, 200
 
 
 @api.post("/products")
-@require_roles(*MANAGER_ROLES)
-def create_product(user):
-    payload, error = json_object(
-        {
-            "sku",
-            "name",
-            "description",
-            "category_id",
-            "supplier_id",
-            "location",
-            "unit",
-            "cost_price",
-            "selling_price",
-            "quantity",
-            "reorder_level",
-            "is_active",
-        }
-    )
+def create_product():
+    user, error = _authorized_user()
     if error:
         return error
+    payload = _json_object()
+    if payload is None:
+        return _error("A JSON object is required")
+    unknown = set(payload) - PRODUCT_FIELDS
+    missing = {"sku", "name", "cost_price", "selling_price"} - set(payload)
+    if unknown:
+        return _error("Unknown product fields: " + ", ".join(sorted(unknown)))
+    if missing:
+        return _error("Required fields are missing: " + ", ".join(sorted(missing)))
 
-    sku = payload["sku"]
-    name = payload["name"]
-    if not isinstance(sku, str) or not sku.strip() or len(sku.strip()) > 64:
-        return {"error": "sku must contain 1 to 64 characters"}, 400
-    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 160:
-        return {"error": "name must contain 1 to 160 characters"}, 400
+    values = {}
+    for field, max_length in (("sku", 64), ("name", 160)):
+        value = payload[field]
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length:
+            return _error(f"{field} must contain 1 to {max_length} characters")
+        values[field] = value.strip()
+    description = payload.get("description")
+    if description is not None and not isinstance(description, str):
+        return _error("description must be a string or null")
+    if description is not None and len(description) > 10000:
+        return _error("description cannot exceed 10000 characters")
+    values["description"] = description
+    try:
+        values["cost_price"] = _money(payload["cost_price"], "cost_price")
+        values["selling_price"] = _money(payload["selling_price"], "selling_price")
+        values["quantity"] = integer_value(payload.get("quantity", 0), "quantity")
+        values["reorder_level"] = integer_value(
+            payload.get("reorder_level", 0), "reorder_level"
+        )
+    except ValueError as error:
+        return _error(str(error))
 
-    description = payload["description"]
-    if description is not None and (
-        not isinstance(description, str) or len(description) > 2000
-    ):
-        return {"error": "description must be a string of at most 2000 characters"}, 400
-
-    category_id = payload["category_id"]
+    category_id = payload.get("category_id")
     if category_id is not None:
-        if isinstance(category_id, bool) or not isinstance(category_id, int):
-            return {"error": "category_id must be an integer or null"}, 400
+        try:
+            category_id = integer_value(category_id, "category_id", 1)
+        except ValueError as error:
+            return _error(str(error))
         if db.session.get(Category, category_id) is None:
-            return {"error": "category_id was not found"}, 400
-
-    supplier_id = payload["supplier_id"]
+            return _error("category_id does not reference an existing category")
+    values["category_id"] = category_id
+    supplier_id = payload.get("supplier_id")
     if supplier_id is not None:
-        if isinstance(supplier_id, bool) or not isinstance(supplier_id, int):
-            return {"error": "supplier_id must be an integer or null"}, 400
+        try:
+            supplier_id = integer_value(supplier_id, "supplier_id", 1)
+        except ValueError as error:
+            return _error(str(error))
         if db.session.get(Supplier, supplier_id) is None:
-            return {"error": "supplier_id was not found"}, 400
-
-    location = payload["location"]
-    if location is not None:
-        if not isinstance(location, str) or len(location.strip()) > 80:
-            return {"error": "location must be a string of at most 80 characters"}, 400
-        location = location.strip() or None
-
-    unit = payload["unit"]
-    if not isinstance(unit, str) or not unit.strip() or len(unit.strip()) > 40:
-        return {"error": "unit must contain 1 to 40 characters"}, 400
-
-    cost_price, cost_error = _parse_money(payload["cost_price"], "cost_price")
-    if cost_error:
-        return {"error": cost_error}, 400
-    selling_price, selling_error = _parse_money(
-        payload["selling_price"], "selling_price"
-    )
-    if selling_error:
-        return {"error": selling_error}, 400
-
-    quantity = payload["quantity"]
-    reorder_level = payload["reorder_level"]
-    is_active = payload["is_active"]
-    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 0:
-        return {"error": "quantity must be a non-negative integer"}, 400
-    if (
-        isinstance(reorder_level, bool)
-        or not isinstance(reorder_level, int)
-        or reorder_level < 0
-    ):
-        return {"error": "reorder_level must be a non-negative integer"}, 400
+            return _error("supplier_id does not reference an existing supplier")
+    values["supplier_id"] = supplier_id
+    for field, max_length in (("location", 80), ("unit", 40)):
+        value = payload.get(field, "units" if field == "unit" else None)
+        if (field == "unit" and value is None) or (
+            value is not None and (
+            not isinstance(value, str) or not value.strip() or len(value.strip()) > max_length
+            )
+        ):
+            nullable = " or null" if field == "location" else ""
+            return _error(f"{field} must contain 1 to {max_length} characters{nullable}")
+        values[field] = value.strip() if isinstance(value, str) else value
+    is_active = payload.get("is_active", True)
     if not isinstance(is_active, bool):
-        return {"error": "is_active must be a boolean"}, 400
+        return _error("is_active must be a boolean")
+    values["is_active"] = is_active
 
-    normalized_sku = sku.strip()
-    existing = db.session.scalar(
-        select(Product.id).where(func.lower(Product.sku) == normalized_sku.lower())
-    )
-    if existing is not None:
-        return {"error": "SKU already exists"}, 409
-
-    product = Product(
-        sku=normalized_sku,
-        name=name.strip(),
-        description=description.strip() if isinstance(description, str) else None,
-        category_id=category_id,
-        supplier_id=supplier_id,
-        location=location,
-        unit=unit.strip(),
-        cost_price=cost_price,
-        selling_price=selling_price,
-        quantity=quantity,
-        reorder_level=reorder_level,
-        is_active=is_active,
-    )
+    product = Product(**values)
     db.session.add(product)
     try:
+        db.session.flush()
+        if product.quantity:
+            db.session.add(
+                StockMovement(
+                    product_id=product.id, # type: ignore
+                    user_id=user.id, # type: ignore
+                    movement_type="receipt", # type: ignore
+                    quantity_change=product.quantity, # type: ignore
+                    reason="Initial stock", # type: ignore
+                )
+            )
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"error": "SKU already exists"}, 409
-    return serialize_product(product, user), 201
+        return _error("A product with this SKU already exists", 409)
+    return {"product": serialize_product(product)}, 201
 
 
 @api.get("/products/<int:product_id>")
-@require_auth
-def get_product(user, product_id):
-    product = db.session.get(Product, product_id)
-    if product is None:
-        return {"error": "Product not found"}, 404
-    return serialize_product(product, user), 200
-
-
-@api.patch("/products/<int:product_id>")
-@require_roles(*MANAGER_ROLES)
-def update_product(user, product_id):
-    product = db.session.get(Product, product_id)
-    if product is None:
-        return {"error": "Product not found"}, 404
-
-    payload, error = json_object_subset(
-        {
-            "sku",
-            "name",
-            "description",
-            "category_id",
-            "supplier_id",
-            "location",
-            "unit",
-            "cost_price",
-            "selling_price",
-            "reorder_level",
-            "is_active",
-        }
+def get_product(product_id):
+    product = db.session.scalar(
+        select(Product)
+        .options(selectinload(Product.category)) # type: ignore
+        .where(Product.id == product_id)
     )
+    if product is None:
+        return _error("Product not found", 404)
+    return {"product": serialize_product(product)}, 200
+
+
+@api.route("/products/<int:product_id>", methods=["PUT", "PATCH"])
+def update_product(product_id):
+    _, error = _authorized_user()
     if error:
         return error
+    payload = _json_object()
+    if payload is None:
+        return _error("A JSON object is required")
+    unknown = set(payload) - EDITABLE_FIELDS
+    if unknown:
+        return _error("Unknown or non-editable product fields: " + ", ".join(sorted(unknown)))
+    if not payload:
+        return _error("At least one editable field is required")
 
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _error("Product not found", 404)
     if "sku" in payload:
-        sku = payload["sku"]
-        if not isinstance(sku, str) or not sku.strip() or len(sku.strip()) > 64:
-            return {"error": "sku must contain 1 to 64 characters"}, 400
-        normalized_sku = sku.strip()
-        existing = db.session.scalar(
-            select(Product.id).where(
-                func.lower(Product.sku) == normalized_sku.lower(),
-                Product.id != product_id,
-            )
-        )
-        if existing is not None:
-            return {"error": "SKU already exists"}, 409
-        product.sku = normalized_sku
+        value = payload["sku"]
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 64:
+            return _error("sku must contain 1 to 64 characters")
+        product.sku = value.strip()
     if "name" in payload:
-        name = payload["name"]
-        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 160:
-            return {"error": "name must contain 1 to 160 characters"}, 400
-        product.name = name.strip()
+        value = payload["name"]
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 160:
+            return _error("name must contain 1 to 160 characters")
+        product.name = value.strip()
     if "description" in payload:
-        description = payload["description"]
-        if description is not None and (
-            not isinstance(description, str) or len(description) > 2000
-        ):
-            return {
-                "error": "description must be a string of at most 2000 characters"
-            }, 400
-        product.description = (
-            description.strip() if isinstance(description, str) else None
-        )
+        value = payload["description"]
+        if value is not None and (not isinstance(value, str) or len(value) > 10000):
+            return _error("description must be a string of at most 10000 characters or null")
+        product.description = value
     if "category_id" in payload:
         category_id = payload["category_id"]
         if category_id is not None:
-            if isinstance(category_id, bool) or not isinstance(category_id, int):
-                return {"error": "category_id must be an integer or null"}, 400
+            try:
+                category_id = integer_value(category_id, "category_id", 1)
+            except ValueError as error:
+                return _error(str(error))
             if db.session.get(Category, category_id) is None:
-                return {"error": "category_id was not found"}, 400
+                return _error("category_id does not reference an existing category")
         product.category_id = category_id
     if "supplier_id" in payload:
         supplier_id = payload["supplier_id"]
         if supplier_id is not None:
-            if isinstance(supplier_id, bool) or not isinstance(supplier_id, int):
-                return {"error": "supplier_id must be an integer or null"}, 400
+            try:
+                supplier_id = integer_value(supplier_id, "supplier_id", 1)
+            except ValueError as error:
+                return _error(str(error))
             if db.session.get(Supplier, supplier_id) is None:
-                return {"error": "supplier_id was not found"}, 400
+                return _error("supplier_id does not reference an existing supplier")
         product.supplier_id = supplier_id
-    if "location" in payload:
-        location = payload["location"]
-        if location is not None:
-            if not isinstance(location, str) or len(location.strip()) > 80:
-                return {
-                    "error": "location must be a string of at most 80 characters"
-                }, 400
-            location = location.strip() or None
-        product.location = location
-    if "unit" in payload:
-        unit = payload["unit"]
-        if not isinstance(unit, str) or not unit.strip() or len(unit.strip()) > 40:
-            return {"error": "unit must contain 1 to 40 characters"}, 400
-        product.unit = unit.strip()
-    if "cost_price" in payload:
-        cost_price, cost_error = _parse_money(payload["cost_price"], "cost_price")
-        if cost_error:
-            return {"error": cost_error}, 400
-        product.cost_price = cost_price
-    if "selling_price" in payload:
-        selling_price, selling_error = _parse_money(
-            payload["selling_price"], "selling_price"
-        )
-        if selling_error:
-            return {"error": selling_error}, 400
-        product.selling_price = selling_price
+    for field, max_length in (("location", 80), ("unit", 40)):
+        if field in payload:
+            value = payload[field]
+            if (field == "unit" and value is None) or (
+                value is not None and (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > max_length
+                )
+            ):
+                nullable = " or null" if field == "location" else ""
+                return _error(f"{field} must contain 1 to {max_length} characters{nullable}")
+            setattr(product, field, value.strip() if isinstance(value, str) else value)
+    for field in ("cost_price", "selling_price"):
+        if field in payload:
+            try:
+                setattr(product, field, _money(payload[field], field))
+            except ValueError as error:
+                return _error(str(error))
     if "reorder_level" in payload:
-        reorder_level = payload["reorder_level"]
-        if (
-            isinstance(reorder_level, bool)
-            or not isinstance(reorder_level, int)
-            or reorder_level < 0
-        ):
-            return {"error": "reorder_level must be a non-negative integer"}, 400
-        product.reorder_level = reorder_level
+        try:
+            product.reorder_level = integer_value(
+                payload["reorder_level"], "reorder_level"
+            )
+        except ValueError as error:
+            return _error(str(error))
     if "is_active" in payload:
         if not isinstance(payload["is_active"], bool):
-            return {"error": "is_active must be a boolean"}, 400
+            return _error("is_active must be a boolean")
         product.is_active = payload["is_active"]
 
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return {"error": "SKU already exists"}, 409
-    return serialize_product(product, user), 200
+        return _error("A product with this SKU already exists", 409)
+    return {"product": serialize_product(product)}, 200
 
 
-@api.post("/products/<int:product_id>/adjustments")
-@require_roles(*STOCK_ROLES)
-def adjust_stock(user, product_id):
-    payload, error = json_object({"quantity_change", "reason"})
+@api.post("/products/<int:product_id>/archive")
+def archive_product(product_id):
+    _, error = _authorized_user()
     if error:
         return error
-
-    try:
-        product, movement = adjust_product_stock(
-            product_id=product_id,
-            quantity_change=payload["quantity_change"],
-            user_id=user.id,
-            reason=payload["reason"],
-        )
-        db.session.commit()
-    except InventoryOperationError as exc:
-        db.session.rollback()
-        return inventory_error_response(exc)
-
-    return {
-        "product": serialize_product(product, user),
-        "movement": {
-            "id": movement.id,
-            "product_id": movement.product_id,
-            "movement_type": movement.movement_type,
-            "quantity_change": movement.quantity_change,
-            "reason": movement.reason,
-            "created_at": movement.created_at.isoformat(),
-        },
-    }, 200
+    product = db.session.get(Product, product_id)
+    if product is None:
+        return _error("Product not found", 404)
+    product.is_active = False
+    db.session.commit()
+    return {"product": serialize_product(product)}, 200
