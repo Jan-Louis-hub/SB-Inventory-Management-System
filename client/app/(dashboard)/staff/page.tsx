@@ -48,6 +48,8 @@ const REQUEST_STYLES: Record<RequestStatus, string> = {
   declined: "bg-muted text-muted-foreground",
 }
 
+export const instant = false
+
 export default function StaffDashboardPage() {
   return (
     <div className="flex flex-col gap-5">

@@ -20,7 +20,63 @@ export type CountLine = {
   counted: number | null
 }
 
-const COUNTS: StockCount[] = []
+// Floor counts for Harbour Lane. `counted` is what has been ticked off.
+const SEED: StockCount[] = [
+  {
+    id: "CNT-014",
+    area: "Men's floor",
+    location: "Men's floor",
+    due: "Today",
+    status: "scheduled",
+    owner: "James Nkosi",
+    counted: {},
+  },
+  {
+    id: "CNT-013",
+    area: "Women's floor",
+    location: "Women's floor",
+    due: "Tomorrow",
+    status: "scheduled",
+    owner: "Amahle Dlamini",
+    counted: {},
+  },
+  {
+    id: "CNT-011",
+    area: "Back room",
+    location: "Back room",
+    due: "Friday",
+    status: "in_progress",
+    owner: "James Nkosi",
+    counted: { "ACC-001": 28 },
+  },
+  {
+    id: "CNT-008",
+    area: "Window",
+    location: "Window",
+    due: "18 Oct",
+    status: "completed",
+    owner: "Sipho Khumalo",
+    counted: {
+      "DRS-022": 9,
+      "ACC-007": 14,
+      "ACC-013": 0,
+      "ACC-020": 13,
+    },
+  },
+  {
+    id: "CNT-006",
+    area: "Kids corner",
+    location: "Kids corner",
+    due: "11 Oct",
+    status: "completed",
+    owner: "Lerato Molefe",
+    counted: {
+      "KID-003": 17,
+      "KID-011": 44,
+      "KID-018": 6,
+    },
+  },
+]
 
 export function countLines(
   location: string,
@@ -61,11 +117,11 @@ export function countProgress(location: string, counted: Record<string, number>)
 }
 
 export function getCounts() {
-  return COUNTS.map((count) => ({ ...count, counted: { ...count.counted } }))
+  return SEED.map((count) => ({ ...count, counted: { ...count.counted } }))
 }
 
 export function getUpcomingCounts() {
-  return COUNTS.filter((count) => count.status !== "completed").map((count) => {
+  return SEED.filter((count) => count.status !== "completed").map((count) => {
     const progress = countProgress(count.location, count.counted)
     return {
       area: count.area,
@@ -77,7 +133,7 @@ export function getUpcomingCounts() {
 }
 
 export function getScheduledCountSummary() {
-  const scheduled = COUNTS.filter((count) => count.status === "scheduled")
+  const scheduled = SEED.filter((count) => count.status === "scheduled")
   const next = scheduled[0]
   return {
     due: scheduled.length,

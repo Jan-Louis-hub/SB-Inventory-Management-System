@@ -1,180 +1,194 @@
 # Small Business Inventory Management System
 
-A full-stack inventory management system for small businesses.
+A full-stack inventory management application for small businesses.
 
-**Stack:** Next.js, shadcn/ui, Flask (Python), PostgreSQL
-
-**Group members:** Vuyisile Nqono, Franco van Rooyen, Jedidiah Tshiteya, Jan-Louie Fourie, Olaotse Phuti
+**Stack:** Next.js, React, Flask, SQLAlchemy, and PostgreSQL
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) (LTS)
-- [Python](https://www.python.org/downloads/) 3.10 or newer
+Install the following before setting up the project:
+
+- [Git](https://git-scm.com/)
+- [Node.js LTS](https://nodejs.org/) (includes npm)
+- [Python 3.10 or newer](https://www.python.org/downloads/)
 - [PostgreSQL](https://www.postgresql.org/download/)
 
-## Setup Backend
+Make sure PostgreSQL is running and you know the username and password for a
+role that can connect to the server and create tables in your development
+database.
+
+## 1. Get the project
+
+Clone the repository, then open a terminal in the newly created project folder:
+
+```bash
+git clone <repository-url>
+cd SB-Inventory-Management-System
+```
+
+Replace `<repository-url>` with the repository's clone URL. If you downloaded
+the repository as a ZIP instead, extract it and open a terminal in the
+extracted folder.
+
+## 2. Set up PostgreSQL and backend configuration
+
+Create an empty PostgreSQL database for local development (for example,
+`inventory_db`). Use a dedicated local role, or another PostgreSQL role with
+permission to connect to this database and create tables.
+
+Create the backend environment file from the example:
+
+**Windows PowerShell**
+
+```powershell
+Copy-Item server\.env.example server\.env
+```
+
+**macOS or Linux**
+
+```bash
+cp server/.env.example server/.env
+```
+
+Edit `server/.env` and set `DEVELOPMENT_DATABASE_URL` to your database
+connection details. For example:
+
+```dotenv
+APP_ENV=development
+SECRET_KEY=<a-long-random-secret>
+DEVELOPMENT_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<database>
+```
+
+Replace each placeholder with your local values and remove the angle brackets.
+URL-encode special characters in the username or password. Generate a private
+secret key with:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Copy the printed value into `SECRET_KEY`. Keep `server/.env` private; it is
+ignored by Git. The app uses `DEVELOPMENT_DATABASE_URL` for local development,
+not `DATABASE_URL`.
+
+## 3. Install dependencies
+
+Create a Python virtual environment and install the backend dependencies.
+
+**Windows PowerShell**
+
+```powershell
+python -m venv server\venv
+server\venv\Scripts\python.exe -m pip install -r server\requirements.txt
+```
+
+**macOS or Linux**
+
+```bash
+python3 -m venv server/venv
+server/venv/bin/python -m pip install -r server/requirements.txt
+```
+
+Install the root development runner and frontend dependencies:
+
+```bash
+npm install
+npm --prefix client install
+```
+
+If `npm` is not recognized in PowerShell, use `npm.cmd` in place of `npm`.
+
+## 4. Configure and initialize the database
+
+Create the frontend environment file:
+
+**Windows PowerShell**
+
+```powershell
+Copy-Item client\.env.example client\.env.local
+```
+
+**macOS or Linux**
+
+```bash
+cp client/.env.example client/.env.local
+```
+
+The example config points the frontend at the local backend on port 8000; leave
+it as-is for local development unless you have changed the backend address.
+
+From the `server` directory, apply the database migrations to create the
+application tables:
+
+**Windows PowerShell**
+
+```powershell
+cd server
+.\venv\Scripts\python.exe -m flask --app main db upgrade
+```
+
+**macOS or Linux**
 
 ```bash
 cd server
-python -m venv venv
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
+./venv/bin/python -m flask --app main db upgrade
 ```
 
-The backend tests use an isolated in-memory SQLite database and exercise the
-migrations; they do not connect to a development or production database:
+Return to the repository root before starting the project with `npm run dev`.
+If PostgreSQL reports a connection error, confirm the database exists, the
+server is running, and the URL in `server/.env` has the correct credentials.
+Do not run migrations against a database containing unrelated or important
+data.
+
+## 5. Run the frontend and backend
+
+With the environment active, start both services from the repository root:
 
 ```bash
-.\venv\Scripts\python.exe -m pytest
-```
-
-Create your environment file:
-
-```bash
-copy .env.example .env
-```
-
-Set `APP_ENV` and the matching database URL in `server/.env` (copied from the
-example). Use a different database for each environment:
-
-| Environment | Setting |
-| --- | --- |
-| Development | `DEVELOPMENT_DATABASE_URL` |
-| Testing | `TEST_DATABASE_URL` |
-| Production | `PRODUCTION_DATABASE_URL` and `SECRET_KEY` |
-
-Never point tests at a development or production database. URL-encode special
-characters in PostgreSQL usernames and passwords. The old `DATABASE_URL` name
-is not used; configure the environment-specific name instead. Production
-startup fails unless both production settings are present.
-
-### Initialize and migrate the database
-
-Run these commands from `server` with its virtual environment active. For a
-new, empty database, apply the checked-in migrations:
-
-```bash
-.\venv\Scripts\python.exe -m flask --app main db upgrade
-```
-
-The initial migration creates the users, categories, products, suppliers,
-stock movements, sales, sale items, purchase orders, and purchase order items
-tables. Migrations also add integrity constraints and indexes. For optional
-clothing-shop sample data, run `flask --app main seed-demo` after upgrading.
-Demo seeding is refused in production.
-
-If you previously created tables using the old `init-db`/`create_all` command,
-**back up the database first**. Verify that its schema matches the initial
-migration before marking it as migrated; stamping records a version and does
-not create or validate tables:
-
-```bash
-.\venv\Scripts\python.exe -m flask --app main db stamp e8a0a7372b82
-.\venv\Scripts\python.exe -m flask --app main db upgrade
-```
-
-Do not run `db stamp` on an empty or mismatched database. Check migration
-status with `flask --app main db current` and `flask --app main db heads`.
-Before upgrading existing data, check for values that differ only by letter
-case in user emails, product SKUs, and category names; the migration adds
-case-insensitive uniqueness and will fail rather than merge records.
-Create and review each schema change before deployment:
-
-```bash
-.\venv\Scripts\python.exe -m flask --app main db migrate -m "describe the schema change"
-.\venv\Scripts\python.exe -m flask --app main db upgrade
-```
-
-Review generated migrations for data conversion, constraint changes, and
-indexes; Alembic autogeneration does not capture every database-level change.
-Use `EXPLAIN ANALYZE` with representative data before adding more indexes. Test
-upgrades on a copy of production data before deployment. Avoid downgrades in
-production unless the migration's data-loss implications are understood.
-
-### Backups and recovery
-
-Use PostgreSQL's `pg_dump` custom format and store backups outside the
-repository in access-controlled storage. For example, in PowerShell:
-
-```powershell
-pg_dump --format=custom --no-owner --file=inventory-backup.dump --dbname="$env:PRODUCTION_DATABASE_URL"
-```
-
-Schedule backups according to the business's recovery-point and retention
-needs. Periodically restore a backup into a **separate, non-production**
-database, then verify the restored schema and representative records before
-relying on the backup. Keep restore credentials and backup files out of source
-control. For a restore test, first create an empty database and set
-`RESTORE_DATABASE_URL` to that database's private connection string, then run:
-
-```powershell
-pg_restore --no-owner --dbname="$env:RESTORE_DATABASE_URL" inventory-backup.dump
-```
-
-### Run the backend
-
-From the `server` directory with the virtual environment active:
-
-```bash
-.\venv\Scripts\python.exe -m flask --app main run --debug --port 8000
-```
-
-- Health endpoint: http://localhost:8000/api/health
-- API conventions and example payloads: `server/API_CONVENTIONS.md`
-- Demo login accounts and backend run instructions: `server/RUN_BACKEND.md`
-- Database setup, migration, connectivity, and testing guide:
-  `server/DATABASE_SETUP_AND_TESTING.md`
-
-## Setup Frontend
-
-```bash
-cd client
-npm install
-copy .env.example .env.local
 npm run dev
 ```
 
-The app runs at http://localhost:3000. `BACKEND_API_URL` in `client/.env.local`
-configures the Next.js server-to-server connection to Flask; it defaults to
-`http://127.0.0.1:8000`. Start Flask in a separate terminal before using the
-login or registration forms.
+Open:
 
-## Adding shadcn/ui Components
+- Frontend: http://localhost:3000
+- Backend health check: http://localhost:8000/api/health
 
-The frontend uses [shadcn/ui](https://ui.shadcn.com/docs). Components are added one at a time from inside the `client` folder:
+Keep the terminal running while you use the app. Press `Ctrl+C` to stop both
+services. PostgreSQL must also remain running. Login and registration require
+the backend to be available.
 
-```bash
-cd client
-npx shadcn@latest add button
+## Optional: run backend tests
+
+The tests use an isolated in-memory SQLite database and do not connect to your
+development PostgreSQL database. Run these commands from the `server`
+directory.
+
+**Windows PowerShell**
+
+```powershell
+.\venv\Scripts\python.exe -m pytest
 ```
 
-You can add several at once:
+**macOS or Linux**
 
 ```bash
-npx shadcn@latest add button card input table dialog
+./venv/bin/python -m pytest
 ```
 
-Components are copied into `client/components/ui`, so you can edit them directly.
+## Troubleshooting
 
-- [shadcn/ui documentation](https://ui.shadcn.com/docs)
-- [Browse all components](https://ui.shadcn.com/docs/components)
-- [Next.js installation guide](https://ui.shadcn.com/docs/installation/next)
+- **Port 3000 or 8000 is already in use:** Stop the other process using that
+  port, then run `npm run dev` again.
+- **Backend cannot connect to PostgreSQL:** Check that PostgreSQL is running,
+  the database has been created, and `DEVELOPMENT_DATABASE_URL` in
+  `server/.env` is correct.
+- **Python or npm command is not found:** Install the prerequisite and reopen
+  the terminal so its PATH is refreshed. On Windows PowerShell, try `npm.cmd`
+  if `npm` is blocked by the script execution policy.
+- **Login accounts:** Follow `server/RUN_BACKEND.md` for the development
+  account setup instructions.
 
-## Running the Full Project
-
-Use two terminals:
-
-| Terminal | Folder | Command |
-|----------|--------|---------|
-| 1 | `server` | `.\venv\Scripts\python.exe -m flask --app main run --debug --port 8000` |
-| 2 | `client` | `npm run dev` |
-
-## Git Workflow
-
-```bash
-git pull
-git add .
-git commit -m "Describe your change"
-git push
-```
-
-Never commit `.env` files, credentials, database dumps, or production data. Use `.env.example` only for variable names and non-secret placeholders.
+For more detail, see
+[`server/DATABASE_SETUP_AND_TESTING.md`](server/DATABASE_SETUP_AND_TESTING.md)
+for database setup and tests, and [`server/API_CONVENTIONS.md`](server/API_CONVENTIONS.md)
+for API conventions.

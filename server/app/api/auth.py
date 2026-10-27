@@ -167,16 +167,16 @@ def _save_oauth_user(provider, claims):
             name = normalized_email.split("@", 1)[0]
         name = name.strip()[:120]
         user = User(
-            name=name,
-            email=normalized_email,
-            password_hash=password_hash.hash(secrets.token_urlsafe(48)),
-            role="staff",
+            name=name, # pyright: ignore[reportCallIssue]
+            email=normalized_email, # type: ignore
+            password_hash=password_hash.hash(secrets.token_urlsafe(48)), # type: ignore
+            role="staff", # type: ignore
         )
         db.session.add(user)
         db.session.flush()
 
     db.session.add(
-        OAuthIdentity(provider=provider, subject=subject, user_id=user.id)
+        OAuthIdentity(provider=provider, subject=subject, user_id=user.id) # type: ignore
     )
     return user
 
@@ -187,9 +187,9 @@ def register():
     if error:
         return error
 
-    name = payload["name"]
-    email = payload["email"]
-    password = payload["password"]
+    name = payload["name"] # type: ignore
+    email = payload["email"] # type: ignore
+    password = payload["password"] # type: ignore
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
         return {"error": "name must contain 1 to 120 characters"}, 400
     if (
@@ -209,10 +209,10 @@ def register():
         return {"error": "An account with this email already exists"}, 409
 
     user = User(
-        name=name.strip(),
-        email=normalized_email,
-        password_hash=password_hash.hash(password),
-        role="staff",
+        name=name.strip(), # type: ignore
+        email=normalized_email, # type: ignore
+        password_hash=password_hash.hash(password), # type: ignore
+        role="staff", # type: ignore
     )
     db.session.add(user)
     try:
@@ -284,9 +284,9 @@ def oauth_callback(provider):
     code = secrets.token_urlsafe(32)
     db.session.add(
         OAuthLoginCode(
-            code_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(),
-            user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + OAUTH_CODE_LIFETIME,
+            code_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(), # type: ignore
+            user_id=user.id, # type: ignore
+            expires_at=datetime.now(timezone.utc) + OAUTH_CODE_LIFETIME, # type: ignore
         )
     )
     try:
@@ -307,7 +307,7 @@ def exchange_oauth_code():
     payload, error = _json_object({"code"})
     if error:
         return error
-    code = payload["code"]
+    code = payload["code"] # type: ignore
     if not isinstance(code, str) or not code or len(code) > 128:
         return {"error": "Invalid or expired sign-in code"}, 400
 
@@ -339,8 +339,8 @@ def login():
     if error:
         return error
 
-    email = payload["email"]
-    password = payload["password"]
+    email = payload["email"] # type: ignore
+    password = payload["password"] # type: ignore
     if (
         not isinstance(email, str)
         or len(email) > 255

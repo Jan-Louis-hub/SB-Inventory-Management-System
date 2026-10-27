@@ -20,6 +20,8 @@ import {
   getInventorySnapshot,
   getProductsForRole,
 } from "@/lib/inventory"
+import { SHOP } from "@/lib/shop"
+
 type MoveFilter = "all" | "IN" | "OUT"
 
 function csvCell(value: string | number) {
@@ -159,7 +161,7 @@ export function ReportsView() {
     <div className="flex flex-col gap-5">
       <PageHeader
         title="Reports"
-        description="Stock value, category mix and the movement ledger."
+        description={`Stock value, category mix and the movement ledger for ${SHOP.name}.`}
         actions={
           <Button className="rounded-sm" onClick={exportCsv}>
             <Download /> Export CSV

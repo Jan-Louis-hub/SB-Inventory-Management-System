@@ -54,6 +54,8 @@ const STATUS_STYLES: Record<Status, string> = {
 }
 
 // "due" is a plain string so the page never reads the clock during prerender
+export const instant = false
+
 export default function ControllerDashboardPage() {
   return (
     <div className="flex flex-col gap-5">

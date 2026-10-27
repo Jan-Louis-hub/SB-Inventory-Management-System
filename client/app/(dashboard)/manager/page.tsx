@@ -38,6 +38,8 @@ const stats: Kpi[] = [
   { title: "Stock value", value: money.format(snap.value), note: "At unit cost", tone: "good", icon: Wallet, href: "/manager/reports" },
 ]
 
+export const instant = false
+
 export default function ManagerDashboardPage() {
   return (
     <div className="flex flex-col gap-5">
